@@ -1,0 +1,37 @@
+#
+#--------------------------------------------------------------------------------
+# pr code configuration and default parameters
+#--------------------------------------------------------------------------------
+#
+
+# EMIT acquisition dataproducts root:
+#emit_acquistion_dataproducts_root: '/store/emit/ops/data/acquisitions'
+# local test subset:
+emit_acquistion_dataproducts_root: './data/acquisitions'
+
+# EMIT acquisition datatproduct types:
+emit_l1b_radiance_type: 'rdn_b0106'
+emit_l1b_glt_type: 'glt_b0106'
+emit_l2a_mask_type: 'mask_b0106'
+
+# methane, co2 matched filter dataproducts root:
+# emit_matched_filter_dataproducts_root: '/store/brodrick/methane/methane_20230813'
+# local test subset:
+emit_matched_filter_dataproducts_root: './data/methane_20230813'
+
+# methane plume data:
+# emit_methane_plumes: '/store/brodrick/methane/ch4_plumedir/previous_manual_annotation_oneback.json'
+# local copy:
+emit_methane_plumes: './data/previous_manual_annotation_oneback.json'
+
+# methane absorption ranges, nanometers, endpoints inclusive:
+ch4_absorption_ranges:
+    - [1640., 1690.]
+    - [2100., 2440.]
+
+# background spectra pairing:
+background_pairing_radius_in_pixels: 200
+
+RANDOM_SEED: 42
+NO_DATA_VALUE: -9999
+CH4_MF_THRESHOLD: 30
