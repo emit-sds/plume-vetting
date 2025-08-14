@@ -21,8 +21,9 @@ emit_matched_filter_dataproducts_root=/store/brodrick/methane/${methane_ver}
 date=20241130
 fid=emit20241130t180334
 
-# GeoJSON plume FeatureCollection:
+# some useful GeoJSON plume FeatureCollections:
 plume_feature_collection='/store/brodrick/methane/ch4_plumedir/previous_manual_annotation_oneback.json'
+#plume_feature_collection='/store/brodrick/methane/decent_snowflake_predicted_plumes.json'
 
 local_data_root='./data'
 

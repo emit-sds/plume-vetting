@@ -20,5 +20,5 @@ dependencies = [
 # (*) required only because gdal @3.10.2_3 (gis) installed in local base
 # environment; enables "from osgeo import gdal"
 
-#[project.scripts]
-#appname = '...:main'
+[project.scripts]
+pv = 'pv.pv:main'

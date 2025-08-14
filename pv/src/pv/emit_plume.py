@@ -6,7 +6,8 @@ EMIT plume class.
 import geojson
 import geopandas as gpd
 import numpy as np
-from shapely import Polygon
+import re
+from shapely import Point, Polygon
 import yaml
 
 from . import emit_file
@@ -26,10 +27,11 @@ class EMITPlume(object):
 
             - (Path and) filename of GeoJSON FeatureCollection object data file,
               e.g., './data/manual_annotation.json'.  Note that, by definition,
-              a GeoJSON FeatureCollection object is a single object with two
-              fields, 'type' and 'features', where 'type' is 'FeatureCollection'
-              and 'features' is an array of GeoJSON 'Feature' objects. In this
-              case, the 'features' will be searched for one containing plume_id.
+              a GeoJSON FeatureCollection object is a single object containing
+              (at least) the two fields, 'type' and 'features', where 'type' is
+              equal to 'FeatureCollection' and 'features' is an array of GeoJSON
+              'Feature' objects. In this case, the 'features' will be searched
+              for one containing plume_id.
 
             - GeoPandas GeoDataFrame containing all plume collection data, the
               result of parsing a GeoJSON FeatureCollection using
@@ -60,10 +62,11 @@ class EMITPlume(object):
         """EMITPlume constructor using one of several approaches.
 
         """
-        self._boundary_xy_pixels = None
-        self._ch4_mf = None
-        self._l1b_glt = None
-        self._random_variation = None
+        self._boundary_xy_pixels= None
+        self._ch4_mf            = None
+        self._fid_key           = None
+        self._l1b_glt           = None
+        self._random_variation  = None
 
         if isinstance(cfg,str):
             cf = open(cfg)
@@ -99,6 +102,25 @@ class EMITPlume(object):
 
         if any(gpd_plume_data_to_search):
 
+            # since plume collections might use slightly different names for
+            # certain keys of interest, uniquely determine applicable key
+            # values: (note that this is somewhat of an experiment. if, in
+            # practice this turns out to be unreliable, we can always add field
+            # names to the config file for particular collections such as
+            # "'FileID':'fids'", "'PlumeID':'Plume ID'", etc.)
+
+            # file id key:
+            re_search_bool = [
+                True if re.search('fids',key,re.IGNORECASE) else False
+                for key in gpd_plume_data_to_search.keys()]
+            _fid_key = [key for key,re_srch_bool in zip(gpd_plume_data_to_search.keys(),re_search_bool) if re_srch_bool]
+            if len(_fid_key)==1:
+                self._fid_key = _fid_key[0]
+            else:
+                raise RuntimeError("Could not find a plume data collection key containing the string 'fids'")
+
+            # other possible key searches here...
+
             gpd_plume_data = gpd_plume_data_to_search[
                 [pid==plume_id for pid in gpd_plume_data_to_search['Plume ID']]]
             if len(gpd_plume_data) == 1:
@@ -107,14 +129,15 @@ class EMITPlume(object):
                 raise RuntimeError(f"Could not find instance of '{plume_id}' in '{plume_data}'")
 
 
+
     @property
     def boundary_pixels(self):
         """Apply affine transformation and L1B GLT lookup to compute plume
         boundary coordinates in acquisition file x/y pixel (sample/line) space.
 
         Returns:
-            boundary_xy_pixels (geopandas.GeoSeries): Plume boundary coordinates
-                expressed as GeoSeries x/y (sample/line) pixels.
+            Plume boundary coordinates expressed as shapely polygon of x/y
+            (sample/line) pixels.
 
         """
         if self._boundary_xy_pixels is None:
@@ -123,7 +146,7 @@ class EMITPlume(object):
                 # get the referenced glt for the scene:
                 self._l1b_glt = emit_file.EMITAcquisitionFile(
                     root=self.cfg['emit_acquistion_dataproducts_root'],
-                    id=self.plume['fids'].iloc[0][0],
+                    id=self.plume[self._fid_key].iloc[0][0],
                     level='l1b', type=self.cfg['emit_l1b_glt_type'])
 
             # plume boundary, in acquisition pixel space (line/sample):
@@ -135,6 +158,58 @@ class EMITPlume(object):
                 Polygon(line_sample_pix[:,[1,0]]))  # note line/sample -> sample/line
 
         return self._boundary_xy_pixels
+
+
+    @property
+    def ch4_mf(self):
+        """Get the methane matched filter results for the plume.
+
+        Returns:
+            EMITMatchedFilterFile object corresponding to the plume's methane
+            matched filter results.
+
+        """
+        if not self._ch4_mf:
+            self._ch4_mf = emit_file.EMITMatchedFilterFile(
+                root=self.cfg['emit_matched_filter_dataproducts_root'],
+                id=self.plume[self._fid_key].iloc[0][0],
+                type='ch4_mf')
+        return self._ch4_mf
+
+
+    def mask(self,random_variation=False):
+        """Return a boolean mask in, and size of, acquisition xy space
+        consisting of: True==pixels inside of plume boundary, False==pixels
+        outside of plume boundary.
+
+        Args:
+            random_variation (bool): If False (default), mask will be computed
+                with respect to original plume boundary. If True, mask will be
+                computed for current random variation of plume boundary (ref.
+                self.new_random_variation()).
+
+        """
+        if not random_variation:
+            # compute original plume mask:
+            mask = np.zeros(self.ch4_mf.data.shape,dtype=bool)
+            (min_x, min_y, max_x, max_y) = tuple(round(self.boundary_pixels.bounds).astype(int).iloc[0])
+            for x in range(min_x,max_x+1):
+                for y in range(min_y,max_y+1):
+                    if self.boundary_pixels.iloc[0].contains(Point(x,y)):
+                        mask[y,x]=True  # note ch4_mf.data are line(y)/sample(x)
+        elif random_variation and self._random_variation is not None:
+            # compute mask for current random plume variation:
+            mask = np.zeros(self.ch4_mf.data.shape,dtype=bool)
+            (min_x, min_y, max_x, max_y) = tuple(round(self._random_variation.bounds).astype(int).iloc[0])
+            for x in range(min_x,max_x+1):
+                for y in range(min_y,max_y+1):
+                    if self._random_variation.iloc[0].contains(Point(x,y)):
+                        mask[y,x]=True  # note ch4_mf.data are line(y)/sample(x)
+        else:
+            raise RuntimeError(
+                "A random variation is not available or has not been generated; cannot compute corresponding mask")
+
+        return mask
 
 
     def new_random_variation(self):
@@ -151,28 +226,18 @@ class EMITPlume(object):
         Remarks:
             Implementation as an explicit 'new_random_variation' function
             ensures new variations are only generated upon request, and that all
-            subsequent operations relating to access of the varied plume are
-            self-consistent until the next update.
+            subsequent operations relating to access of the varied plume can be
+            made to be self-consistent until the next update.
 
         """
-        # check to make sure original plume boundary has been established:
-        if self._boundary_xy_pixels is None:
-            self.boundary_pixels()
-
-        if not self._ch4_mf:
-            self._ch4_mf = emit_file.EMITMatchedFilterFile(
-                root=self.cfg['emit_matched_filter_dataproducts_root'],
-                id=self.plume['fids'].iloc[0][0],
-                type='ch4_mf')
-
         # rotation+translation variation:
 
         rotated_plume = None
         new_random_variation = None
 
         # random rotation within acquisition scene:
-        lines, samples, _ = self._ch4_mf.data.shape
-        min_x_scene, min_y_scene, max_x_scene, max_y_scene = 0, 0, samples, lines
+        lines, samples, _ = self.ch4_mf.data.shape
+        min_x_scene, min_y_scene, max_x_scene, max_y_scene = 0, 0, samples-1, lines-1
         min_x = min_y = max_x = max_y = -1
         while (min_x < min_x_scene) or (min_y < min_y_scene) or (max_x > max_x_scene) or (max_y > max_y_scene):
             rotated_plume = self.boundary_pixels.rotate(
@@ -190,6 +255,12 @@ class EMITPlume(object):
                 new_random_variation = translated_rotated_plume
 
         self._random_variation = new_random_variation
+        #self._random_variation = new_random_variation.iloc[0]
+
+
+    @property
+    def plume_id(self):
+        return self.plume['Plume ID'].iloc[0]
 
 
     @property

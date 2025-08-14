@@ -1,8 +1,11 @@
-#
-#--------------------------------------------------------------------------------
-# pr code configuration and default parameters
-#--------------------------------------------------------------------------------
-#
+
+#===============================================================================
+# plume-vetting configuration and default parameters
+#===============================================================================
+
+#-------------------------------------------------------------------------------
+# EMIT dataproducts and plume inventory:
+#-------------------------------------------------------------------------------
 
 # EMIT acquisition dataproducts root:
 #emit_acquistion_dataproducts_root: '/store/emit/ops/data/acquisitions'
@@ -24,14 +27,28 @@ emit_matched_filter_dataproducts_root: './data/methane_20230813'
 # local copy:
 emit_methane_plumes: './data/previous_manual_annotation_oneback.json'
 
+#-------------------------------------------------------------------------------
+# Parameters related to EMIT dataproducts and plume inventory:
+#-------------------------------------------------------------------------------
+
 # methane absorption ranges, nanometers, endpoints inclusive:
 ch4_absorption_ranges:
     - [1640., 1690.]
     - [2100., 2440.]
 
+NO_DATA_VALUE: -9999
+
+#-------------------------------------------------------------------------------
+# plume vetting controls:
+#-------------------------------------------------------------------------------
+
+# number of "shifted plume" variations:
+NUM_PLUME_VARIATIONS: 1000
+
 # background spectra pairing:
 background_pairing_radius_in_pixels: 200
 
+# included only for original implementation backward compatibility:
 RANDOM_SEED: 42
-NO_DATA_VALUE: -9999
+
 CH4_MF_THRESHOLD: 30

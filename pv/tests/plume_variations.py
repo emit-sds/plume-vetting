@@ -7,7 +7,7 @@ import yaml
 import pv
 
 #
-# Somewhat arbitrary-chosen plume of interest (plume 'CH4_PlumeComplex-3727',
+# Somewhat arbitrarily-chosen plume of interest (plume 'CH4_PlumeComplex-3727',
 # scene 'emit20241130t180334'):
 #
 
@@ -17,7 +17,11 @@ plume_data_src = './data/previous_manual_annotation_oneback.json'
 cfg = yaml.safe_load(open(cfg_src))
 
 # number of test plume variations:
-N = 1000
+N = 100
+
+# alternative output:
+#plot_masks = True
+plot_masks = False
 
 # plume instance:
 ch4_plume = pv.emit_plume.EMITPlume(
@@ -40,17 +44,24 @@ axs.imshow(np.where(ch4_mf.data[:]>cfg['NO_DATA_VALUE'],ch4_mf.data[:],0.))
 
 # original plume:
 axs.plot(
-    np.array(ch4_plume.boundary_pixels.get_coordinates())[:,0],
-    np.array(ch4_plume.boundary_pixels.get_coordinates())[:,1],
+    ch4_plume.boundary_pixels.get_coordinates().x,
+    ch4_plume.boundary_pixels.get_coordinates().y,
     linestyle='-', color='yellow')
+if plot_masks:
+    mask = ch4_plume.mask()
 
 # random rotation+translation variations:
 for i in range(N):
     ch4_plume.new_random_variation()
     axs.plot(
-        np.array(ch4_plume.random_variation.get_coordinates())[:,0],
-        np.array(ch4_plume.random_variation.get_coordinates())[:,1],
+        ch4_plume.random_variation.get_coordinates().x,
+        ch4_plume.random_variation.get_coordinates().y,
         linestyle='-', color='red')
+    if plot_masks:
+        mask = mask + ch4_plume.mask(random_variation=True)
+
+if plot_masks:
+    axs.imshow(mask)
 
 plt.title(f'{ch4_plume.plume['Plume ID'].iloc[0]}; {ch4_plume.plume['fids'].iloc[0][0]}')
 axs.set_xlabel('Acquisition Samples')
