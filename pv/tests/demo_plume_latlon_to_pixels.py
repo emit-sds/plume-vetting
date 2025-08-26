@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 
 #
-# Test conversion of lat/lon plume boundary to pixel coordinates, visually
-# confirm via retrieval and orthorectified image plots.
+# Test/demonstrate conversion of lat/lon plume boundary to pixel coordinates,
+# visually confirm via retrieval and orthorectified image plots.
 #
 
 import geojson

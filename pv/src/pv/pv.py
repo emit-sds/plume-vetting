@@ -7,10 +7,12 @@ import logging
 import numpy as np
 import yaml
 
-from . import emit_file
+#tmp:
+import matplotlib.pyplot as plt
+
+from .emit_file import EMITAcquisitionFile, EMITMatchedFilterFile
 from .emit_plume import EMITPlume
 from . import utils
-
 
 logging.basicConfig(
     format = '%(levelname)-10s %(asctime)s %(message)s')
@@ -37,8 +39,8 @@ def create_parser():
 
 
 def plume_vetting( plume_data=None, plume_id=None, cfg=None, log_level=None):
-    """Reworked and updated methane plume vetting implementation based on
-    original publication, "Identification of false methane plumes for orbital
+    """Refactored and updated methane plume vetting implementation, originally
+    based on publication, "Identification of false methane plumes for orbital
     imaging spectrometers: A case study with EMIT" by Xiang, et al.
 
     Args:
@@ -59,22 +61,79 @@ def plume_vetting( plume_data=None, plume_id=None, cfg=None, log_level=None):
         log.setLevel(log_level)
 
     plume = EMITPlume( plume_id=plume_id, plume_data=plume_data, cfg=cfg)
+    print(f'type(plume): {type(plume)}')
 
-    log.info("running plume vetting metrics on plume %s...", plume.plume_id)
+    log.info("running plume vetting metrics on plume %s, fid %s...",
+        plume.plume_id, plume.fid)
 
     #
-    # "shifted" plume experiments:
+    # quantities common to all plume experiments:
+    #
+
+    # "combined" mask (clouds + water + 'no ch4_mf data'),
+    # 'True' for features that should be excluded:
+    l2a_mask = EMITAcquisitionFile(
+        root=cfg['emit_acquistion_dataproducts_root'],
+        id=plume.fid, level='l2a', type = cfg['emit_l2a_mask_type'])
+    combined_mask = np.sum(l2a_mask.data[...,:3],axis=-1) > 0                   # clouds, surface water
+    combined_mask[np.squeeze(plume.ch4_mf.data)<=cfg['NO_DATA_VALUE']] = True   # plus missing ch4_mf data
+    #plt.imshow(combined_mask)
+    #plt.show()
+
+
+    #
+    # original, and shifted plume experiments:
     #
 
     for plume_variation_i in range(cfg['NUM_PLUME_VARIATIONS']):
+
+        # first plume experiment is with respect to original plume, while
+        # subsequent experiments are with respect to randomly shifted plumes:
 
         if plume_variation_i==0:
             is_random_variation = False
         else:
             is_random_variation = True
 
-        #ch4_mf_avg = plume.ch4_mf_avg(is_random_variation)
+        # "basic" plume mask, to which modifications will be applied (note that
+        # in this context, 'True' implies data values we intend to keep, 'False'
+        # are those to exclude):
 
+        plume_mask = np.copy(np.squeeze(plume.mask(is_random_variation)))
+
+        # apply "combined" mask:
+        plume_mask = plume_mask & ~combined_mask
+
+        # "raw" (i.e., for entire plume) min/max/mean metrics:
+        in_plume_mf_mean = np.mean(
+            np.squeeze(plume.ch4_mf.data)[plume_mask])
+        in_plume_mf_max = np.max(
+            np.squeeze(plume.ch4_mf.data)[plume_mask])
+        in_plume_mf_min = np.min(
+            np.squeeze(plume.ch4_mf.data)[plume_mask])
+
+        # exclude points with MF values greater than nth percentile:
+        nth_percentile = np.percentile(
+            np.squeeze(plume.ch4_mf.data)[plume_mask],
+            cfg['CH4_MF_EXCLUDE_PERCENTILE'])
+
+        log.info(f'in-plume matched filter min/max/mean/nth_percentile: {in_plume_mf_min}/{in_plume_mf_max}/{in_plume_mf_mean}/{nth_percentile}')
+
+        # exclude extreme points:
+        plume_mask = (plume.ch4_mf.data<nth_percentile) & plume_mask
+
+        # TODO: from this point on...
+
+        # select N points with highest matched filter values:
+
+        # apply pixel dilation:
+
+        # select only those points that have nonzero matched filter values greater than zero:
+
+        # similarity matrix:
+
+        # generate new random (rotation+translation) variation:
+        plume.new_random_variation()
 
 #
 #   The following is obsolete first-draft code, retained only for (ongoing)
@@ -146,6 +205,10 @@ def main():
     args = parser.parse_args()
 
     cfg = yaml.safe_load(open(args.cfg))
+
+    # repeatability testing:
+    if 'RANDOM_SEED' in cfg:
+        np.random.seed(cfg['RANDOM_SEED'])
 
     gpd_plume_data = gpd.GeoDataFrame.from_features(
         geojson.load(open(args.plume_data))['features'])

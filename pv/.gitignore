@@ -1,0 +1,7 @@
+
+# macOS folder attributes:
+.DS_Store
+
+# emacs temporary files:
+*~
+

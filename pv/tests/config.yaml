@@ -43,12 +43,18 @@ NO_DATA_VALUE: -9999
 #-------------------------------------------------------------------------------
 
 # number of "shifted plume" variations:
-NUM_PLUME_VARIATIONS: 1000
+NUM_PLUME_VARIATIONS: 10
+#NUM_PLUME_VARIATIONS: 100
+
+# exclude ch4 mf plume values greater than nth percentile (replaces original
+# 'extreme_pts_flag', and adds a modifiable nth percentile value):
+CH4_MF_EXCLUDE_PERCENTILE: 99
 
 # background spectra pairing:
 background_pairing_radius_in_pixels: 200
 
-# included only for original implementation backward compatibility:
-RANDOM_SEED: 42
+# impose "deterministic" random behaviour:
+#RANDOM_SEED: 42 <- original
+RANDOM_SEED: 0
 
 CH4_MF_THRESHOLD: 30

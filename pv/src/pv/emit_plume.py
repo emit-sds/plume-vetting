@@ -146,7 +146,7 @@ class EMITPlume(object):
                 # get the referenced glt for the scene:
                 self._l1b_glt = emit_file.EMITAcquisitionFile(
                     root=self.cfg['emit_acquistion_dataproducts_root'],
-                    id=self.plume[self._fid_key].iloc[0][0],
+                    id=self.fid,
                     level='l1b', type=self.cfg['emit_l1b_glt_type'])
 
             # plume boundary, in acquisition pixel space (line/sample):
@@ -162,7 +162,7 @@ class EMITPlume(object):
 
     @property
     def ch4_mf(self):
-        """Get the methane matched filter results for the plume.
+        """Get the methane matched filter results for the plume's scene.
 
         Returns:
             EMITMatchedFilterFile object corresponding to the plume's methane
@@ -175,6 +175,11 @@ class EMITPlume(object):
                 id=self.plume[self._fid_key].iloc[0][0],
                 type='ch4_mf')
         return self._ch4_mf
+
+
+    @property
+    def fid(self):
+        return self.plume[self._fid_key].iloc[0][0]
 
 
     def mask(self,random_variation=False):
