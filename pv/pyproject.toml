@@ -6,7 +6,6 @@ build-backend = 'setuptools.build_meta'
 name = 'pv'
 version = '1.0'
 dependencies = [
-#   'gdal==3.10.2',     # (*)
     'geojson',
     'geopandas',
     'matplotlib',
@@ -17,8 +16,6 @@ dependencies = [
     'shapely',
     'spectral'
 ]
-# (*) required only because gdal @3.10.2_3 (gis) installed in local base
-# environment; enables "from osgeo import gdal"
 
 [project.scripts]
 pv = 'pv.pv:main'

@@ -5,6 +5,10 @@ import geojson
 import geopandas as gpd
 import logging
 import numpy as np
+import pandas as pd
+from scipy.ndimage import gaussian_filter
+from scipy.optimize import linear_sum_assignment
+from scipy.spatial.distance import cdist
 import yaml
 
 #tmp:
@@ -56,24 +60,29 @@ def plume_vetting( plume_data=None, plume_id=None, cfg=None, log_level=None):
         TODO: Define useful screening/ranking plume vetting metrics
 
     """
-    log = logging.getLogger('edp.'+__name__)
+    log = logging.getLogger('pv.'+__name__)
     if log_level:
         log.setLevel(log_level)
 
+    # plume instance:
     plume = EMITPlume( plume_id=plume_id, plume_data=plume_data, cfg=cfg)
-    print(f'type(plume): {type(plume)}')
 
     log.info("running plume vetting metrics on plume %s, fid %s...",
         plume.plume_id, plume.fid)
 
     #
-    # quantities common to all plume experiments:
+    # quantities common to all experiments for this plume:
     #
+
+    # radiance data:
+    l1b_radiance = EMITAcquisitionFile(
+        root=cfg['emit_acquisition_dataproducts_root'],
+        id=plume.fid, level='l1b', type = cfg['emit_l1b_radiance_type'])
 
     # "combined" mask (clouds + water + 'no ch4_mf data'),
     # 'True' for features that should be excluded:
     l2a_mask = EMITAcquisitionFile(
-        root=cfg['emit_acquistion_dataproducts_root'],
+        root=cfg['emit_acquisition_dataproducts_root'],
         id=plume.fid, level='l2a', type = cfg['emit_l2a_mask_type'])
     combined_mask = np.sum(l2a_mask.data[...,:3],axis=-1) > 0                   # clouds, surface water
     combined_mask[np.squeeze(plume.ch4_mf.data)<=cfg['NO_DATA_VALUE']] = True   # plus missing ch4_mf data
@@ -85,7 +94,7 @@ def plume_vetting( plume_data=None, plume_id=None, cfg=None, log_level=None):
     # original, and shifted plume experiments:
     #
 
-    for plume_variation_i in range(cfg['NUM_PLUME_VARIATIONS']):
+    for plume_variation_i in range(cfg['NUM_PLUME_VARIATIONS']+1):
 
         # first plume experiment is with respect to original plume, while
         # subsequent experiments are with respect to randomly shifted plumes:
@@ -93,11 +102,15 @@ def plume_vetting( plume_data=None, plume_id=None, cfg=None, log_level=None):
         if plume_variation_i==0:
             is_random_variation = False
         else:
+            # generate new random (rotation+translation) variation:
+            plume.new_random_variation()
             is_random_variation = True
 
-        # "basic" plume mask, to which modifications will be applied (note that
-        # in this context, 'True' implies data values we intend to keep, 'False'
-        # are those to exclude):
+        #
+        # "basic" plume mask, to which modifications will be applied (in this,
+        # and all subsequent, 'True' for features to include, 'False' for
+        # features to exclude):
+        #
 
         plume_mask = np.copy(np.squeeze(plume.mask(is_random_variation)))
 
@@ -112,89 +125,124 @@ def plume_vetting( plume_data=None, plume_id=None, cfg=None, log_level=None):
         in_plume_mf_min = np.min(
             np.squeeze(plume.ch4_mf.data)[plume_mask])
 
-        # exclude points with MF values greater than nth percentile:
+        #
+        # determine "optimal" target and background pixel pairs:
+        #
+
+        # plume target pixels ('True' for retained target pixels):
+
+        # mask out pixels with MF values greater than N-th percentile:
         nth_percentile = np.percentile(
             np.squeeze(plume.ch4_mf.data)[plume_mask],
             cfg['CH4_MF_EXCLUDE_PERCENTILE'])
+        target_pixel_mask = np.logical_and(
+            plume_mask, np.squeeze(plume.ch4_mf.data)<=nth_percentile)
 
-        log.info(f'in-plume matched filter min/max/mean/nth_percentile: {in_plume_mf_min}/{in_plume_mf_max}/{in_plume_mf_mean}/{nth_percentile}')
+        if log.getEffectiveLevel()==logging.DEBUG:
+            if plume_variation_i==0:
+                log.debug('plume %s high-level MF metrics: variation#/min/max/mean/nth-percentile:', plume.fid)
+            log.debug('%d / %f / %f / %f / %f', plume_variation_i, in_plume_mf_min, in_plume_mf_max, in_plume_mf_mean, nth_percentile)
 
-        # exclude extreme points:
-        plume_mask = (plume.ch4_mf.data<nth_percentile) & plume_mask
+        # reduce target_pixel_mask to NUM_SEED_PIXELS:
+        tmp = np.squeeze(plume.ch4_mf.data)[target_pixel_mask]
+        tmp.sort()
+        seed_threshold = tmp[-cfg['NUM_SEED_PIXELS']]
+        target_pixel_mask = np.logical_and(
+            target_pixel_mask,
+            (np.squeeze(plume.ch4_mf.data)*target_pixel_mask)>=seed_threshold)
 
-        # TODO: from this point on...
+        # "blur" pixel mask to form "region" of target pixels:
+        dilated_target_pixel_mask = gaussian_filter(
+            target_pixel_mask.astype(float),
+            sigma=cfg['GAUSSIAN_FILTER_SIGMA']) > \
+                cfg['GAUSSIAN_FILTER_RESULTS_THRESHOLD']
 
-        # select N points with highest matched filter values:
+        # and reapply combined mask in case Gaussian filtering has reintroduced pixels
+        # that should be excluded:
+        dilated_target_pixel_mask = dilated_target_pixel_mask & ~combined_mask
 
-        # apply pixel dilation:
+        # option to retain only those target pixels corresponding to positive ch4
+        # matched filter values:
+        if cfg['POSITIVE_TARGET_PIXELS_ONLY']:
+            dilated_target_pixel_mask = np.logical_and(
+                dilated_target_pixel_mask, np.squeeze(plume.ch4_mf.data)>0.)
 
-        # select only those points that have nonzero matched filter values greater than zero:
+        # background pixels ('True' for candidate background pixels):
 
-        # similarity matrix:
+        bpe = cfg['BACKGROUND_PAIRING_EXTENTS_IN_PIXELS']       # notational
+        mf_delta = cfg['BACKGROUND_PAIRING_CH4_MF_THRESHOLD']   # convenience
 
-        # generate new random (rotation+translation) variation:
-        plume.new_random_variation()
+        background_pixel_mask = np.zeros(plume_mask.shape,dtype=bool)
+        num_lines,num_samples = background_pixel_mask.shape
 
-#
-#   The following is obsolete first-draft code, retained only for (ongoing)
-#   migration purposes (most operations are now in file and plume classes):
-#
-#    for idx,fid in enumerate(gpd_plume_data['fids']):
-#
-#        #
-#        # standard EMIT products:
-#        #
-#
-#        print(f'---------> fid: {fid}')
-#
-#        l1b_radiance = emit_file.EMITAcquisitionFile(
-#            root=cfg['emit_acquistion_dataproducts_root'],
-#            id=fid, level='l1b', type = cfg['emit_l1b_radiance_type'])
-#        print(f'l1b_radiance.data.shape: {l1b_radiance.data.shape}')
-#
-#        l1b_glt = emit_file.EMITAcquisitionFile(
-#            root=cfg['emit_acquistion_dataproducts_root'],
-#            id=fid, level='l1b', type = cfg['emit_l1b_glt_type'])
-#        print(f'l1b_glt.data.shape: {l1b_glt.data.shape}')
-#
-#        l2a_mask = emit_file.EMITAcquisitionFile(
-#            root=cfg['emit_acquistion_dataproducts_root'],
-#            id=fid, level='l2a', type = cfg['emit_l2a_mask_type'])
-#        print(f'l2a_mask.data.shape: {l2a_mask.data.shape}')
-#
-#        #
-#        # methane matched filter results:
-#        #
-#
-#        ch4_mf = emit_file.EMITMatchedFilterFile(
-#            root=cfg['emit_matched_filter_dataproducts_root'],
-#            id=fid, type='ch4_mf')
-#        print(f'ch4_mf.filestr: {ch4_mf.filestr}')
-#        print(f'ch4_mf.data.shape: {ch4_mf.data.shape}')
-#
-#        #
-#        # quantities common to each shifted plume experiment:
-#        #
-#
-#        # cloud, surface water, and missing pixel binary mask ('True' == masked):
-#        combined_mask = np.sum(l2a_mask.data[...,:3],axis=-1) > 0           # clouds, surface water
-#        combined_mask[np.squeeze(ch4_mf.data)<=cfg['NO_DATA_VALUE']] = True # plus missing ch4_mf data
-#        print(f'combined_mask.sum(): {combined_mask.sum()}')
-#
-#        # matched filter background threshold mask:
-#        background_mask = combined_mask.copy()
-#        background_mask[
-#            (np.squeeze(ch4_mf.data) < -cfg['CH4_MF_THRESHOLD']) |
-#            (np.squeeze(ch4_mf.data) >  cfg['CH4_MF_THRESHOLD'])  ] = True
-#        print(f'background_mask.sum(): {background_mask.sum()}')
-#        #plt.imshow(background_mask); plt.colorbar(); plt.show()
-#
-#        #--> next: plume countours, and pull in mask and plume plot capabilities...
-#
-#        # for purposes of plume overlap identification, use the l1b geographic
-#        # lookup table to convert lat/lon plume definition points to acquisition
-#        # file sample/line pixel locations: --see new func def at bottom of this
-#        # file; move to a utility later on...
+        # consider background region based on target pixel extents...:
+        line_indices,sample_indices = np.nonzero(dilated_target_pixel_mask)
+        background_pixel_mask[
+            max(0,min(line_indices)-bpe) : min(num_lines,max(line_indices)+bpe),
+            max(0,min(sample_indices)-bpe) : min(num_samples,max(sample_indices)+bpe)] = True
+
+        # as is the case with target pixels, make sure water and missing features are excluded:
+        background_pixel_mask = background_pixel_mask & ~combined_mask
+
+        # remove target pixels from consideration:
+        background_pixel_mask = background_pixel_mask & ~dilated_target_pixel_mask
+
+        # filter background pixels according to MF value range:
+        #background_pixel_mask = background_pixel_mask & ~combined_mask
+        background_pixel_mask = np.logical_and(
+            background_pixel_mask,
+            np.logical_and(
+                np.squeeze(plume.ch4_mf.data) > -mf_delta,
+                np.squeeze(plume.ch4_mf.data) <  mf_delta))
+
+        # "optimal" target and background pixel pairing based on non-ch4 wavelengths:
+
+        dilated_target_pixel_mask_indices = np.where(dilated_target_pixel_mask)
+        background_pixel_mask_indices = np.where(background_pixel_mask)
+
+        wl = np.array(l1b_radiance.hdr['wavelength'],dtype=float)
+        ch4_rngs = np.array(cfg['ch4_absorption_ranges'])
+        ch4_wl_indices = np.where(
+            ((wl >= ch4_rngs[0,0]) & (wl <= ch4_rngs[0,1])) |
+            ((wl >= ch4_rngs[1,0]) & (wl <= ch4_rngs[1,1])))[0]
+        non_ch4_wl_indices = np.where(
+            ~((wl >= ch4_rngs[0,0]) & (wl <= ch4_rngs[0,1])) |
+            ((wl >= ch4_rngs[1,0]) & (wl <= ch4_rngs[1,1])))[0]
+        target_non_ch4_spectra = l1b_radiance.data[dilated_target_pixel_mask][:,non_ch4_wl_indices]
+        background_non_ch4_spectra = l1b_radiance.data[background_pixel_mask][:,non_ch4_wl_indices]
+
+        # L1-normalized Euclidian distance spectral similarity matrix (target pixel rows x background pixel columns):
+        similarity_matrix = cdist( target_non_ch4_spectra, background_non_ch4_spectra, 'euclidean')
+
+        # use optimal assignment to determine non-repeated index pairs (for each target pixel, corresponding "best fit" background pixel,
+        # no background pixel used more than once):
+        target_indices, background_indices = linear_sum_assignment(similarity_matrix)
+
+        # gather indices, metrics in DataFrame for subsequent operations, analysis:
+        similarity_results_df = pd.DataFrame(columns=[
+            'similarity_matrix_target_index',
+            'similarity_matrix_background_index',
+            'similarity_matrix_coefficient',
+            'target_indices',
+            'background_indices',
+            'target_mf',
+            'mean_target_radiance',
+            'mean_background_radiance'])
+        for tgt_idx,bg_idx in zip(target_indices, background_indices):
+            similarity_results_df.loc[tgt_idx] = [
+                tgt_idx,
+                bg_idx,
+                similarity_matrix[tgt_idx,bg_idx],
+                (dilated_target_pixel_mask_indices[0][tgt_idx],dilated_target_pixel_mask_indices[1][tgt_idx]),
+                (background_pixel_mask_indices[0][bg_idx],background_pixel_mask_indices[1][bg_idx]),
+                np.squeeze(plume.ch4_mf.data[(dilated_target_pixel_mask_indices[0][tgt_idx],dilated_target_pixel_mask_indices[1][tgt_idx])]),
+                np.mean(l1b_radiance.data[(dilated_target_pixel_mask_indices[0][tgt_idx],dilated_target_pixel_mask_indices[1][tgt_idx]),:]),
+                np.mean(l1b_radiance.data[(background_pixel_mask_indices[0][tgt_idx],background_pixel_mask_indices[1][tgt_idx]),:]),
+            ]
+
+        #if log.getEffectiveLevel()==logging.DEBUG:
+        #    print(similarity_results_df)
+
 
 
 def main():

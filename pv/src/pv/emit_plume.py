@@ -145,7 +145,7 @@ class EMITPlume(object):
             if not self._l1b_glt:
                 # get the referenced glt for the scene:
                 self._l1b_glt = emit_file.EMITAcquisitionFile(
-                    root=self.cfg['emit_acquistion_dataproducts_root'],
+                    root=self.cfg['emit_acquisition_dataproducts_root'],
                     id=self.fid,
                     level='l1b', type=self.cfg['emit_l1b_glt_type'])
 

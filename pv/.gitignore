@@ -5,3 +5,8 @@
 # emacs temporary files:
 *~
 
+# jupyter notebook auto-generated checkpoints...:
+.ipynb_checkpoints
+
+# ...and unsaved notebooks:
+Untitled.ipynb

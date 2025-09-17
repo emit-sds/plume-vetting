@@ -10,7 +10,7 @@
 # EMIT acquisition dataproducts root:
 #emit_acquistion_dataproducts_root: '/store/emit/ops/data/acquisitions'
 # local test subset:
-emit_acquistion_dataproducts_root: './data/acquisitions'
+emit_acquisition_dataproducts_root: './data/acquisitions'
 
 # EMIT acquisition datatproduct types:
 emit_l1b_radiance_type: 'rdn_b0106'
@@ -47,14 +47,41 @@ NUM_PLUME_VARIATIONS: 10
 #NUM_PLUME_VARIATIONS: 100
 
 # exclude ch4 mf plume values greater than nth percentile (replaces original
-# 'extreme_pts_flag', and adds a modifiable nth percentile value):
+# 'extreme_pts_flag', and adds a modifiable nth percentile value; note that a
+# value of 100 implies no exclusion):
 CH4_MF_EXCLUDE_PERCENTILE: 99
 
-# background spectra pairing:
-background_pairing_radius_in_pixels: 200
+# number of target "seed pixels" for target/background radiance comparisons:
+#NUM_SEED_PIXELS: 10
+NUM_SEED_PIXELS: 40
+
+# Gaussian filter (image convolution) for target pixel "dilation"
+# (the following values produce a 3x3 mask about a pixel, and are equivalent to
+# the original implementation's dilate_flag=1/square_size=3 dilate pixel
+# settings):
+GAUSSIAN_FILTER_SIGMA: 1
+GAUSSIAN_FILTER_RESULTS_THRESHOLD: 0.05
+
+# include only target pixels corresponding to positive ch4 matched filter
+# values:
+POSITIVE_TARGET_PIXELS_ONLY: False
+
+# background spectra pairing
+# (rectangular region from which background pixels will be selected (+- extents
+# applied to min/max line/sample target pixel set):
+#BACKGROUND_PAIRING_EXTENTS_IN_PIXELS: 20
+BACKGROUND_PAIRING_EXTENTS_IN_PIXELS: 200
+
+# matched filter threshold for background pixel consideration (pixels outside of
+# +/- range to be excluded):
+BACKGROUND_PAIRING_CH4_MF_THRESHOLD: 30
+
+# spectral similarity wavelength inclusion logic (replaces 'full_flag',
+# where 0 -> do not consider methane absorption bands,
+# 1-> consider all bands):
+SPECTRAL_SIMILARITY_USE_REDUCED_WAVELENGTHS: True
 
 # impose "deterministic" random behaviour:
-#RANDOM_SEED: 42 <- original
+#RANDOM_SEED: 42 <- original, for some reason
 RANDOM_SEED: 0
 
-CH4_MF_THRESHOLD: 30

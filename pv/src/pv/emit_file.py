@@ -8,7 +8,8 @@ import os
 import re
 from spectral.io import envi
 
-#TODO: possible EMITFile base class for shared data, methods
+# TODO: possible EMITFile base class for shared data, methods across
+# EMITAcquisitionFile and EMITMatchedFilterFile classes
 
 
 class EMITAcquisitionFile(object):
