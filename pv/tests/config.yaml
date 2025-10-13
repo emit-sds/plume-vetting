@@ -13,9 +13,12 @@
 emit_acquisition_dataproducts_root: './data/acquisitions'
 
 # EMIT acquisition datatproduct types:
+emit_l1b_bandmask_type: 'bandmask_b0106'
+emit_l1b_glt_type:      'glt_b0106'
+emit_l1b_loc_type:      'loc_b0106'
+emit_l1b_obs_type:      'obs_b0106'
 emit_l1b_radiance_type: 'rdn_b0106'
-emit_l1b_glt_type: 'glt_b0106'
-emit_l2a_mask_type: 'mask_b0106'
+emit_l2a_mask_type:     'mask_b0106'
 
 # methane, co2 matched filter dataproducts root:
 # emit_matched_filter_dataproducts_root: '/store/brodrick/methane/methane_20230813'
@@ -31,9 +34,14 @@ emit_methane_plumes: './data/previous_manual_annotation_oneback.json'
 # Parameters related to EMIT dataproducts and plume inventory:
 #-------------------------------------------------------------------------------
 
-# methane absorption ranges, nanometers, endpoints inclusive:
+# methane absorption ranges, nanometers, endpoints inclusive (any number of
+# range pairs allowed, as long as ch4_absorption_ranges is n x 2):
 ch4_absorption_ranges:
     - [1640., 1690.]
+    - [2100., 2440.]
+
+# methance absorption region used for model fitting:
+ch4_fitting_absorption_ranges:
     - [2100., 2440.]
 
 NO_DATA_VALUE: -9999
@@ -43,15 +51,16 @@ NO_DATA_VALUE: -9999
 #-------------------------------------------------------------------------------
 
 # number of "shifted plume" variations:
-NUM_PLUME_VARIATIONS: 10
-#NUM_PLUME_VARIATIONS: 100
+#NUM_PLUME_VARIATIONS: 10
+NUM_PLUME_VARIATIONS: 100
 
 # exclude ch4 mf plume values greater than nth percentile (replaces original
 # 'extreme_pts_flag', and adds a modifiable nth percentile value; note that a
 # value of 100 implies no exclusion):
 CH4_MF_EXCLUDE_PERCENTILE: 99
 
-# number of target "seed pixels" for target/background radiance comparisons:
+# number of target "seed pixels" for target/background radiance comparisons
+# (note: paper used 30, implementation used 40):
 #NUM_SEED_PIXELS: 10
 NUM_SEED_PIXELS: 40
 
@@ -72,14 +81,18 @@ POSITIVE_TARGET_PIXELS_ONLY: False
 #BACKGROUND_PAIRING_EXTENTS_IN_PIXELS: 20
 BACKGROUND_PAIRING_EXTENTS_IN_PIXELS: 200
 
-# matched filter threshold for background pixel consideration (pixels outside of
-# +/- range to be excluded):
+# matched filter threshold (+/- ppm) for background pixel consideration (pixels
+# outside of range to be excluded):
 BACKGROUND_PAIRING_CH4_MF_THRESHOLD: 30
 
 # spectral similarity wavelength inclusion logic (replaces 'full_flag',
 # where 0 -> do not consider methane absorption bands,
 # 1-> consider all bands):
 SPECTRAL_SIMILARITY_USE_REDUCED_WAVELENGTHS: True
+
+# fraction of target/background pixel pairs to retain based on "best" (lowest)
+# similarity matrix scores:
+SPECTRAL_SIMILARITY_FRACTION_RETAINED: 0.5
 
 # impose "deterministic" random behaviour:
 #RANDOM_SEED: 42 <- original, for some reason

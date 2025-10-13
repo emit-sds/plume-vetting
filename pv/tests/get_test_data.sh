@@ -36,7 +36,10 @@ mkdir -p ./${local_data_root}/${methane_ver}/${date}
 scp ${username}@${remote}:${plume_feature_collection} ${local_data_root}/
 
 # somewhat randomly-chosen acquisition scene and plume data:
+scp "${username}@${remote}:${emit_acquistion_dataproducts_root}/${date}/${fid}/l1b/*mask*"  ${local_data_root}/acquisitions/${date}/${fid}/l1b/
 scp "${username}@${remote}:${emit_acquistion_dataproducts_root}/${date}/${fid}/l1b/*glt*"   ${local_data_root}/acquisitions/${date}/${fid}/l1b/
+scp "${username}@${remote}:${emit_acquistion_dataproducts_root}/${date}/${fid}/l1b/*loc*"   ${local_data_root}/acquisitions/${date}/${fid}/l1b/
+scp "${username}@${remote}:${emit_acquistion_dataproducts_root}/${date}/${fid}/l1b/*obs*"   ${local_data_root}/acquisitions/${date}/${fid}/l1b/
 scp "${username}@${remote}:${emit_acquistion_dataproducts_root}/${date}/${fid}/l1b/*rdn*"   ${local_data_root}/acquisitions/${date}/${fid}/l1b/
 scp "${username}@${remote}:${emit_acquistion_dataproducts_root}/${date}/${fid}/l2a/*mask*"  ${local_data_root}/acquisitions/${date}/${fid}/l2a/
 

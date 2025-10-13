@@ -56,7 +56,7 @@ axs.imshow(np.where(ch4_mf.data[:]>cfg['NO_DATA_VALUE'],ch4_mf.data[:],0.))
 if include_combined_mask:
     # 'True' for features that should be excluded:
     l2a_mask = pv.emit_file.EMITAcquisitionFile(
-        root=cfg['emit_acquistion_dataproducts_root'],
+        root=cfg['emit_acquisition_dataproducts_root'],
         id=ch4_plume.fid, level='l2a', type = cfg['emit_l2a_mask_type'])
     combined_mask = np.sum(l2a_mask.data[...,:3],axis=-1) > 0                       # clouds, surface water
     combined_mask[np.squeeze(ch4_plume.ch4_mf.data)<=cfg['NO_DATA_VALUE']] = True   # plus missing ch4_mf data

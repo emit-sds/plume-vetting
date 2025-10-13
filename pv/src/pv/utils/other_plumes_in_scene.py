@@ -43,9 +43,3 @@ def other_plumes_in_scene( fid, plume_id, plume_data_all):
     except:
         return None
 
-
-
-#plumes_in_scene = plume_data_all[
-#    any(set(fids_of_interest).intersection(set(fids))) for fids in gpd_plume_data_all['fids']]
-
-

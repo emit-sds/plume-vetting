@@ -11,9 +11,6 @@ from scipy.optimize import linear_sum_assignment
 from scipy.spatial.distance import cdist
 import yaml
 
-#tmp:
-import matplotlib.pyplot as plt
-
 from .emit_file import EMITAcquisitionFile, EMITMatchedFilterFile
 from .emit_plume import EMITPlume
 from . import utils
@@ -77,22 +74,25 @@ def plume_vetting( plume_data=None, plume_id=None, cfg=None, log_level=None):
     # radiance data:
     l1b_radiance = EMITAcquisitionFile(
         root=cfg['emit_acquisition_dataproducts_root'],
-        id=plume.fid, level='l1b', type = cfg['emit_l1b_radiance_type'])
+        id=plume.fid, level='l1b',
+        type=cfg['emit_l1b_radiance_type'],
+        ext='hdr')
 
     # "combined" mask (clouds + water + 'no ch4_mf data'),
     # 'True' for features that should be excluded:
     l2a_mask = EMITAcquisitionFile(
         root=cfg['emit_acquisition_dataproducts_root'],
-        id=plume.fid, level='l2a', type = cfg['emit_l2a_mask_type'])
-    combined_mask = np.sum(l2a_mask.data[...,:3],axis=-1) > 0                   # clouds, surface water
+        id=plume.fid, level='l2a',
+        type=cfg['emit_l2a_mask_type'], ext='hdr')
+    combined_mask = np.sum(l2a_mask.data[:,:,:3],axis=-1) > 0                   # clouds, surface water
     combined_mask[np.squeeze(plume.ch4_mf.data)<=cfg['NO_DATA_VALUE']] = True   # plus missing ch4_mf data
-    #plt.imshow(combined_mask)
-    #plt.show()
-
 
     #
     # original, and shifted plume experiments:
     #
+
+    log.info("performing %d shifted plume experiments (cfg['NUM_PLUME_VARIATIONS'])...",
+        cfg['NUM_PLUME_VARIATIONS'])
 
     for plume_variation_i in range(cfg['NUM_PLUME_VARIATIONS']+1):
 
@@ -187,8 +187,8 @@ def plume_vetting( plume_data=None, plume_id=None, cfg=None, log_level=None):
         # remove target pixels from consideration:
         background_pixel_mask = background_pixel_mask & ~dilated_target_pixel_mask
 
-        # filter background pixels according to MF value range:
-        #background_pixel_mask = background_pixel_mask & ~combined_mask
+        # select pixels with little to no ch4 absorption (i.e., filter according
+        # to +/- MF small value range):
         background_pixel_mask = np.logical_and(
             background_pixel_mask,
             np.logical_and(
@@ -202,32 +202,40 @@ def plume_vetting( plume_data=None, plume_id=None, cfg=None, log_level=None):
 
         wl = np.array(l1b_radiance.hdr['wavelength'],dtype=float)
         ch4_rngs = np.array(cfg['ch4_absorption_ranges'])
-        ch4_wl_indices = np.where(
-            ((wl >= ch4_rngs[0,0]) & (wl <= ch4_rngs[0,1])) |
-            ((wl >= ch4_rngs[1,0]) & (wl <= ch4_rngs[1,1])))[0]
-        non_ch4_wl_indices = np.where(
-            ~((wl >= ch4_rngs[0,0]) & (wl <= ch4_rngs[0,1])) |
-            ((wl >= ch4_rngs[1,0]) & (wl <= ch4_rngs[1,1])))[0]
+        ch4_wl_indices = []
+        # accommodate any number of ch4_rngs range pairs:
+        for i in range(ch4_rngs.shape[0]):
+            ch4_wl_indices.extend(list(np.where((wl >= ch4_rngs[i,0]) & (wl <= ch4_rngs[i,1]))[0]))
+        # and, just to be sure, make sure none of the indices are repeated, and
+        # sort for convenience:
+        ch4_wl_indices = list(set(ch4_wl_indices))
+        ch4_wl_indices.sort()
+        non_ch4_wl_indices = list(set(range(len(wl))).difference(set(ch4_wl_indices)))
         target_non_ch4_spectra = l1b_radiance.data[dilated_target_pixel_mask][:,non_ch4_wl_indices]
         background_non_ch4_spectra = l1b_radiance.data[background_pixel_mask][:,non_ch4_wl_indices]
 
-        # L1-normalized Euclidian distance spectral similarity matrix (target pixel rows x background pixel columns):
-        similarity_matrix = cdist( target_non_ch4_spectra, background_non_ch4_spectra, 'euclidean')
+        # L1-normalized Euclidian distance spectral similarity matrix (target
+        # pixel rows x background pixel columns):
+        similarity_matrix = cdist(
+            target_non_ch4_spectra, background_non_ch4_spectra, 'euclidean')
 
-        # use optimal assignment to determine non-repeated index pairs (for each target pixel, corresponding "best fit" background pixel,
-        # no background pixel used more than once):
-        target_indices, background_indices = linear_sum_assignment(similarity_matrix)
+        # use optimal assignment to determine non-repeated index pairs (for each
+        # target pixel, corresponding "best fit" background pixel, no background
+        # pixel used more than once):
+        target_row_indices, background_column_indices = linear_sum_assignment(similarity_matrix)
 
-        # gather indices, metrics in DataFrame for subsequent operations, analysis:
+        # for convenience, gather indices, metrics in DataFrame for subsequent
+        # operations, analysis:
         similarity_results_df = pd.DataFrame(columns=[
             'similarity_matrix_target_index',
             'similarity_matrix_background_index',
             'similarity_matrix_coefficient',
-            'target_indices',
-            'background_indices',
+            'target_pixel_indices',
+            'background_pixel_indices',
             'target_mf',
-            'mean_target_radiance',
-            'mean_background_radiance'])
+            'background_mf',
+            'target_mean_radiance',
+            'background_mean_radiance'])
         for tgt_idx,bg_idx in zip(target_indices, background_indices):
             similarity_results_df.loc[tgt_idx] = [
                 tgt_idx,
@@ -236,13 +244,58 @@ def plume_vetting( plume_data=None, plume_id=None, cfg=None, log_level=None):
                 (dilated_target_pixel_mask_indices[0][tgt_idx],dilated_target_pixel_mask_indices[1][tgt_idx]),
                 (background_pixel_mask_indices[0][bg_idx],background_pixel_mask_indices[1][bg_idx]),
                 np.squeeze(plume.ch4_mf.data[(dilated_target_pixel_mask_indices[0][tgt_idx],dilated_target_pixel_mask_indices[1][tgt_idx])]),
+                np.squeeze(plume.ch4_mf.data[(background_pixel_mask_indices[0][tgt_idx],background_pixel_mask_indices[1][tgt_idx])]),
                 np.mean(l1b_radiance.data[(dilated_target_pixel_mask_indices[0][tgt_idx],dilated_target_pixel_mask_indices[1][tgt_idx]),:]),
                 np.mean(l1b_radiance.data[(background_pixel_mask_indices[0][tgt_idx],background_pixel_mask_indices[1][tgt_idx]),:]),
             ]
 
+        # to account for scene inhomogeneity, consider only a defined percentage
+        # of pairs having the lowest (i.e., "best") similarity scores:
+        sorted_similarity_results_df = similarity_results_df.sort_values(by='similarity_matrix_coefficient')
+        sorted_similarity_results_df = sorted_similarity_results_df[
+            :int(len(sorted_similarity_results_df)*cfg['SPECTRAL_SIMILARITY_FRACTION_RETAINED'])]
+
+        #
+        # in progress: set up ghg_process.main call...
+        #
+
+#        # ----------------------------------------------------------------------
+#        ghg_process.main...
+#
+#            from Chuchu's code:
+#
+#            s = f'{self.rdn_filename}
+#                {self.obs_filename}
+#                {self.loc_filename}
+#                {self.glt_filename}
+#                {self.atm_filename} <- ?
+#                {self.bandmask_filename}
+#                {l2a_mask_filename}
+#                {output_path_name.rstrip("/")}/{self.name_string} --state_subs {self.state_subs_filename}'
+#
+#            new ghg_process code:
+#
+#                radiance_file
+#                obs_file
+#                loc_file
+#                glt_file
+#                l1b_bandmask_file
+#                l2a_mask_file
+#
+#
+#            radiance_file
+#
+#
+#        # ----------------------------------------------------------------------
+
+
         #if log.getEffectiveLevel()==logging.DEBUG:
         #    print(similarity_results_df)
 
+        # spatial averaging...
+
+    log.info("...completed %d shifted plume experiments (cfg['NUM_PLUME_VARIATIONS']).",
+        cfg['NUM_PLUME_VARIATIONS'])
 
 
 def main():

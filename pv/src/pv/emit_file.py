@@ -48,10 +48,16 @@ class EMITAcquisitionFile(object):
         date (str): Date from either input filestr, or 'date' or 'id' kwarg.
         ext (str):  File extension, if applicable, from either input filestr
             or 'ext' kwarg.
-        file (str): File from input filestr, kwargs, or shell wildcard
-            expression.
-        filestr (str): (Path and) filename from input, kwargs, or shell
+        filename (str): Unique path and filename based on path_and_filestr
+            directory lookup.
+        filestr (str): File string from either input filestr, kwargs, or shell
             wildcard expression.
+        path_and_filestr (str): (Path and) file string from either input
+            filestr, kwargs, or shell wildcard expression.
+        #file (str): File from input filestr, kwargs, or shell wildcard
+        #    expression.
+        #filestr (str): (Path and) filename from input, kwargs, or shell
+        #    wildcard expression.
         hdr (dict): View of .hdr file data.
         id (str):   File id (emit<date>t<time> string) from input
             filestr, kwargs, or shell wildcard expression.
@@ -180,14 +186,7 @@ class EMITAcquisitionFile(object):
         if self.ext != '.hdr':
             self.ext = '.hdr'
 
-        filestr_glob_results = glob.glob(self.filestr)
-
-        if len(filestr_glob_results) == 1:
-            # unique file; read:
-            np_memmap_array = envi.open(filestr_glob_results[0]).open_memmap()
-        else:
-            raise RuntimeError(
-                f'search for file matching {self.filestr} returned non-unique result ({len(filestr_glob_results)} file(s) found)')
+        np_memmap_array = envi.open(self.filename).open_memmap()
 
         self.ext = ext_sav
         return np_memmap_array
@@ -207,13 +206,30 @@ class EMITAcquisitionFile(object):
 
 
     @property
-    def file(self):
+    def filename(self):
+        """Return unique path and filename based on directory lookup.
+
+        Raises:
+            RuntimeError if nonunique filename found.
+
+        """
+        filestr_glob_results = glob.glob(self.path_and_filestr)
+        if len(filestr_glob_results) == 1:
+            return filestr_glob_results[0]
+        else:
+            e1 = f"search for file matching {self.path_and_filestr} returned non-unique result ({len(filestr_glob_results)} file(s) found)."
+            e2 = f" Set 'ext' to obtain unique match."
+            raise RuntimeError(e1+e2)
+
+
+    @property
+    def filestr(self):
         """Return emit<date>t<time>_<orbit>_<scene>_<level>_<type>_<ver>.<ext>
         string, or shell wildcard equivalent.
 
         """
-        if self._file:
-            return self._file
+        if self._filestr:
+            return self._filestr
         else:
             return \
                 self.id + '_' + \
@@ -226,20 +242,6 @@ class EMITAcquisitionFile(object):
 
 
     @property
-    def filestr(self):
-        """Return
-        '<path>/emit<date>t<time>_<orbit>_<scene>_<level>_<type>_<ver>.<ext>'
-        expression from either input filestr, or expansion using available
-        components or their wildcard equivalents.
-
-        """
-        if self._filestr:
-            return self._filestr
-        else:
-            return ((self.path + '/') if self.path else '') + self.file
-
-
-    @property
     def hdr(self):
         """Return dict view of .hdr file.
 
@@ -248,14 +250,7 @@ class EMITAcquisitionFile(object):
         if self.ext != '.hdr':
             self.ext = '.hdr'
 
-        filestr_glob_results = glob.glob(self.filestr)
-
-        if len(filestr_glob_results) == 1:
-            # unique file; read:
-            hdr = envi.read_envi_header(filestr_glob_results[0])
-        else:
-            raise RuntimeError(
-                f'search for file matching {self.filestr} returned non-unique result ({len(filestr_glob_results)} file(s) found)')
+        hdr = envi.read_envi_header(self.filename)
 
         self.ext = ext_sav
         return hdr
@@ -298,6 +293,19 @@ class EMITAcquisitionFile(object):
                 (self.date if self.date else '*') + '/' + \
                 self.id                           + '/' + \
                 (self.level if self.level else '*')
+
+
+    @property
+    def path_and_filestr(self):
+        """Return '<path>/emit<date>t<time>_<orbit>_<scene>_<level>_<type>_<ver>.<ext>'
+        expression from either input filestr, or expansion using available
+        components or their wildcard equivalents.
+
+        """
+        if self._filestr:
+            return self._filestr
+        else:
+            return ((self.path + '/') if self.path else '') + self.filestr
 
 
     @property
@@ -363,10 +371,16 @@ class EMITMatchedFilterFile(object):
         date (str): Date from either input filestr, or date or id kwarg.
         ext (str):  File extension, if applicable, from either input filestr
             or kwarg.
-        file (str): File from input filestr, kwargs, or shell wildcard
-            expression, whichever applies.
-        filestr (str): (Path and) filename either from input, kwargs, or shell
-            wildcard expression, whichever applies.
+        filename (str): Unique path and filename based on path_and_filestr
+            directory lookup.
+        filestr (str): File string from either input filestr, kwargs, or shell
+            wildcard expression.
+        path_and_filestr (str): (Path and) file string from either input
+            filestr, kwargs, or shell wildcard expression.
+        #file (str): File from input filestr, kwargs, or shell wildcard
+        #    expression, whichever applies.
+        #filestr (str): (Path and) filename either from input, kwargs, or shell
+        #    wildcard expression, whichever applies.
         hdr (dict): View of .hdr file data.
         id (str):   File id (emit<date>t<time> string) from either input
             filestr, kwargs, or shell wildcard expression, whichever applies.
@@ -463,14 +477,7 @@ class EMITMatchedFilterFile(object):
         if self.ext != '.hdr':
             self.ext = '.hdr'
 
-        filestr_glob_results = glob.glob(self.filestr)
-
-        if len(filestr_glob_results) == 1:
-            # unique file; read:
-            np_memmap_array = envi.open(filestr_glob_results[0]).open_memmap()
-        else:
-            raise RuntimeError(
-                f'search for file matching {self.filestr} returned non-unique result ({len(filestr_glob_results)} file(s) found)')
+        np_memmap_array = envi.open(self.filename).open_memmap()
 
         self.ext = ext_sav
         return np_memmap_array
@@ -489,31 +496,35 @@ class EMITMatchedFilterFile(object):
 
 
     @property
-    def file(self):
-        """Return 'emit<date>t<time>_<type>.<ext>' expression from input
-        filestr, or expansion using available components or their shell wildcard
-        equivalents.
+    def filename(self):
+        """Return unique path and filename based on directory lookup.
+
+        Raises:
+            RuntimeError if nonunique filename found.
 
         """
-        if self._file:
-            return self._file
+        filestr_glob_results = glob.glob(self.path_and_filestr)
+        if len(filestr_glob_results) == 1:
+            return filestr_glob_results[0]
         else:
-            return self.id + \
-                '_' + \
-                (self.type if self.type else '*') + \
-                (self.ext if self.ext else '')
+            e1 = f"search for file matching {self.path_and_filestr} returned non-unique result ({len(filestr_glob_results)} file(s) found)."
+            e2 = f" Set 'ext' to obtain unique match."
+            raise RuntimeError(e1+e2)
 
 
     @property
     def filestr(self):
-        """Return '<root>/<date>' expresssion from input filestr, or expansion
-        using available components or their wildcard equivalents.
+        """Return 'emit<date>t<time>_<type>.<ext>' string, or shell wildcard
+        equivalent.
 
         """
         if self._filestr:
             return self._filestr
         else:
-            return ((self.path + '/') if self.path else '') + self.file
+            return \
+                self.id + '_' + \
+                (self.type if self.type else '*') + \
+                (self.ext if self.ext else '')
 
 
     @property
@@ -525,14 +536,7 @@ class EMITMatchedFilterFile(object):
         if self.ext != '.hdr':
             self.ext = '.hdr'
 
-        filestr_glob_results = glob.glob(self.filestr)
-
-        if len(filestr_glob_results) == 1:
-            # unique file; read:
-            hdr = envi.read_envi_header(filestr_glob_results[0])
-        else:
-            raise RuntimeError(
-                f'search for file matching {self.filestr} returned non-unique result ({len(filestr_glob_results)} file(s) found)')
+        hdr = envi.read_envi_header(self.filename)
 
         self.ext = ext_sav
         return hdr
@@ -562,6 +566,19 @@ class EMITMatchedFilterFile(object):
             return \
                 (self.root if self.root else '*') + '/' + \
                 (self.date if self.date else '*')
+
+
+    @property
+    def path_and_filestr(self):
+        """Return '<path>/emit<date>t<time>_<type>.<ext>'
+        expression from either input filestr, or expansion using available
+        components or their wildcard equivalents.
+
+        """
+        if self._filestr:
+            return self._filestr
+        else:
+            return ((self.path + '/') if self.path else '') + self.filestr
 
 
     @property

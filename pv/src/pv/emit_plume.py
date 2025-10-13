@@ -173,7 +173,7 @@ class EMITPlume(object):
             self._ch4_mf = emit_file.EMITMatchedFilterFile(
                 root=self.cfg['emit_matched_filter_dataproducts_root'],
                 id=self.plume[self._fid_key].iloc[0][0],
-                type='ch4_mf')
+                type='ch4_mf',ext='hdr')
         return self._ch4_mf
 
 
