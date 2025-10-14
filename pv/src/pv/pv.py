@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 from scipy.ndimage import gaussian_filter
 from scipy.optimize import linear_sum_assignment
+from scipy.optimize import curve_fit
 from scipy.spatial.distance import cdist
 import yaml
 
@@ -256,43 +257,35 @@ def plume_vetting( plume_data=None, plume_id=None, cfg=None, log_level=None):
             :int(len(sorted_similarity_results_df)*cfg['SPECTRAL_SIMILARITY_FRACTION_RETAINED'])]
 
         #
-        # in progress: set up ghg_process.main call...
+        # TODO: set up ghg_process.main call...
         #
 
-#        # ----------------------------------------------------------------------
-#        ghg_process.main...
-#
-#            from Chuchu's code:
-#
-#            s = f'{self.rdn_filename}
-#                {self.obs_filename}
-#                {self.loc_filename}
-#                {self.glt_filename}
-#                {self.atm_filename} <- ?
-#                {self.bandmask_filename}
-#                {l2a_mask_filename}
-#                {output_path_name.rstrip("/")}/{self.name_string} --state_subs {self.state_subs_filename}'
-#
-#            new ghg_process code:
-#
-#                radiance_file
-#                obs_file
-#                loc_file
-#                glt_file
-#                l1b_bandmask_file
-#                l2a_mask_file
-#
-#
-#            radiance_file
-#
-#
-#        # ----------------------------------------------------------------------
+        #
+        # generalized plume transmittance model fit:
+        #
 
+        ch4_fitting_rngs = np.array(cfg['ch4_fitting_absorption_ranges'])
+        ch4_fitting_wl_indices = []
+        for i in range(ch4_fitting_rngs.shape[0]):
+            ch4_fitting_wl_indices.extend(list(np.where((wl >= ch4_fitting_rngs[i,0]) & (wl <= ch4_fitting_rngs[i,1]))[0]))
+        # and, just to be sure, make sure none of the indices are repeated, and
+        # sort for convenience:
+        ch4_fitting_wl_indices = list(set(ch4_fitting_wl_indices))
+        ch4_fitting_wl_indices.sort()
 
-        #if log.getEffectiveLevel()==logging.DEBUG:
-        #    print(similarity_results_df)
+        transmittance_model_fixed_epsilon = functools.partial(
+            utils.transmittance_model,epsilon=ch4_eps_interp[ch4_fitting_wl_indices])
 
-        # spatial averaging...
+        popt, _ = curve_fit(
+            transmittance_model_fixed_epsilon,
+            wl[ch4_fitting_wl_indices],
+            target_background_radiance_ratio[ch4_fitting_wl_indices],
+            p0 = [1.,0.,0.,0.,0.,0.,0.,0.])
+
+        #
+        # TODO: D_norm which, together with popt[0] form primary "goodness of
+        # fit" output metrics.
+        #
 
     log.info("...completed %d shifted plume experiments (cfg['NUM_PLUME_VARIATIONS']).",
         cfg['NUM_PLUME_VARIATIONS'])
