@@ -2,8 +2,9 @@
 # macOS folder attributes:
 .DS_Store
 
-# emacs temporary files:
+# emacs temporary and autosave files:
 *~
+\#*#
 
 # jupyter notebook auto-generated checkpoints...:
 .ipynb_checkpoints

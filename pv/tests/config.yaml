@@ -94,7 +94,10 @@ SPECTRAL_SIMILARITY_USE_REDUCED_WAVELENGTHS: True
 # similarity matrix scores:
 SPECTRAL_SIMILARITY_FRACTION_RETAINED: 0.5
 
+# plume transmittance model polynomial degree:
+TRANSMITTANCE_MODEL_POLYNOMIAL_DEGREE: 10
+
 # impose "deterministic" random behaviour:
-#RANDOM_SEED: 42 <- original, for some reason
+#RANDOM_SEED: 42 <- original, for some obscure reason
 RANDOM_SEED: 0
 

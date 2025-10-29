@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import argparse
+import functools
 import geojson
 import geopandas as gpd
 import logging
@@ -22,7 +23,8 @@ log = logging.getLogger('pv')
 
 
 def create_parser():
-    """
+    """Application-level argument definitions.
+
     """
     parser = argparse.ArgumentParser()
     parser.add_argument('--cfg', help="""
@@ -79,6 +81,9 @@ def plume_vetting( plume_data=None, plume_id=None, cfg=None, log_level=None):
         type=cfg['emit_l1b_radiance_type'],
         ext='hdr')
 
+    #dbg:
+    print(f'l1b_radiance.data.shape: {l1b_radiance.data.shape}')
+
     # "combined" mask (clouds + water + 'no ch4_mf data'),
     # 'True' for features that should be excluded:
     l2a_mask = EMITAcquisitionFile(
@@ -113,7 +118,8 @@ def plume_vetting( plume_data=None, plume_id=None, cfg=None, log_level=None):
         # features to exclude):
         #
 
-        plume_mask = np.copy(np.squeeze(plume.mask(is_random_variation)))
+        plume_mask = np.copy(np.squeeze(plume.mask(
+            random_variation=is_random_variation)))
 
         # apply "combined" mask:
         plume_mask = plume_mask & ~combined_mask
@@ -215,8 +221,8 @@ def plume_vetting( plume_data=None, plume_id=None, cfg=None, log_level=None):
         target_non_ch4_spectra = l1b_radiance.data[dilated_target_pixel_mask][:,non_ch4_wl_indices]
         background_non_ch4_spectra = l1b_radiance.data[background_pixel_mask][:,non_ch4_wl_indices]
 
-        # L1-normalized Euclidian distance spectral similarity matrix (target
-        # pixel rows x background pixel columns):
+        # L1-normalized Euclidian distance spectral similarity matrix
+        # (target pixel rows x background pixel columns):
         similarity_matrix = cdist(
             target_non_ch4_spectra, background_non_ch4_spectra, 'euclidean')
 
@@ -237,18 +243,21 @@ def plume_vetting( plume_data=None, plume_id=None, cfg=None, log_level=None):
             'background_mf',
             'target_mean_radiance',
             'background_mean_radiance'])
-        for tgt_idx,bg_idx in zip(target_indices, background_indices):
+        for tgt_idx,bg_idx in zip(target_row_indices, background_column_indices):
             similarity_results_df.loc[tgt_idx] = [
                 tgt_idx,
                 bg_idx,
                 similarity_matrix[tgt_idx,bg_idx],
                 (dilated_target_pixel_mask_indices[0][tgt_idx],dilated_target_pixel_mask_indices[1][tgt_idx]),
                 (background_pixel_mask_indices[0][bg_idx],background_pixel_mask_indices[1][bg_idx]),
-                np.squeeze(plume.ch4_mf.data[(dilated_target_pixel_mask_indices[0][tgt_idx],dilated_target_pixel_mask_indices[1][tgt_idx])]),
-                np.squeeze(plume.ch4_mf.data[(background_pixel_mask_indices[0][tgt_idx],background_pixel_mask_indices[1][tgt_idx])]),
+                plume.ch4_mf.data[(dilated_target_pixel_mask_indices[0][tgt_idx],dilated_target_pixel_mask_indices[1][tgt_idx])][0],
+                plume.ch4_mf.data[(background_pixel_mask_indices[0][tgt_idx],background_pixel_mask_indices[1][tgt_idx])][0],
                 np.mean(l1b_radiance.data[(dilated_target_pixel_mask_indices[0][tgt_idx],dilated_target_pixel_mask_indices[1][tgt_idx]),:]),
                 np.mean(l1b_radiance.data[(background_pixel_mask_indices[0][tgt_idx],background_pixel_mask_indices[1][tgt_idx]),:]),
             ]
+
+        # dbg:
+        #print(similarity_results_df)
 
         # to account for scene inhomogeneity, consider only a defined percentage
         # of pairs having the lowest (i.e., "best") similarity scores:
@@ -256,9 +265,40 @@ def plume_vetting( plume_data=None, plume_id=None, cfg=None, log_level=None):
         sorted_similarity_results_df = sorted_similarity_results_df[
             :int(len(sorted_similarity_results_df)*cfg['SPECTRAL_SIMILARITY_FRACTION_RETAINED'])]
 
+        # ref. ../../tests/demo_plume_pixel_pairing.ipynb for examples of
+        # metrics that could be drawn directly from sorted_similarity_results_df
+
+        # final paired radiances:
+        target_radiances = l1b_radiance.data[
+            [index[0] for index in sorted_similarity_results_df['target_pixel_indices']],   # line indices
+            [index[1] for index in sorted_similarity_results_df['target_pixel_indices']],   # sample indices
+            :]
+        background_radiances = l1b_radiance.data[
+            [index[0] for index in sorted_similarity_results_df['background_pixel_indices']],   # line indices
+            [index[1] for index in sorted_similarity_results_df['background_pixel_indices']],   # sample indices
+            :]
+
+        target_background_radiance_ratio = \
+            np.mean(target_radiances,axis=0)/np.mean(background_radiances,axis=0)
+
         #
-        # TODO: set up ghg_process.main call...
+        # TODO 1/2: ghg_process.main call for ch4 absorptivities (ch4_eps)
         #
+
+        #
+        # TODO 2/2: as a result of TODO 1/2, reach into ./data for some ch4
+        # absorptivity data, TOTAL KLUDGE; FOR TEST PURPOSES ONLY:
+        #
+
+        ch4_eps = pd.read_csv('./data/AV320241104t181131_target.csv',
+            sep='\\s+', names=['index','lambda','eps'], header=None)
+        ch4_eps['eps'] *= -1.
+        # since these values have been provided on a slightly different wavelength grid,
+        # interpolate to EMIT spectra:
+        ch4_eps_interp = np.interp(wl,ch4_eps['lambda'],ch4_eps['eps'])
+        # to match eventual dataflow, just overwrite dataframe with ch4
+        # interpolated values:
+        ch4_eps = ch4_eps_interp
 
         #
         # generalized plume transmittance model fit:
@@ -274,18 +314,48 @@ def plume_vetting( plume_data=None, plume_id=None, cfg=None, log_level=None):
         ch4_fitting_wl_indices.sort()
 
         transmittance_model_fixed_epsilon = functools.partial(
-            utils.transmittance_model,epsilon=ch4_eps_interp[ch4_fitting_wl_indices])
+            utils.transmittance_model,epsilon=ch4_eps[ch4_fitting_wl_indices])
 
         popt, _ = curve_fit(
             transmittance_model_fixed_epsilon,
             wl[ch4_fitting_wl_indices],
             target_background_radiance_ratio[ch4_fitting_wl_indices],
-            p0 = [1.,0.,0.,0.,0.,0.,0.,0.])
+            p0 = [1.] + [0.]*(cfg['TRANSMITTANCE_MODEL_POLYNOMIAL_DEGREE']+1))
 
-        #
-        # TODO: D_norm which, together with popt[0] form primary "goodness of
-        # fit" output metrics.
-        #
+        # "goodnes" of fit metrics:
+        # what follows is "as implemented" in the original plume vetting code, using the
+        # options as described in Chuchu et al. Much could be done to improve the
+        # approach, beginning with questioning its rationale.
+
+        (transmittance_model_polynomial, transmittance_model_exponential) = \
+            utils.transmittance_model_components(
+                wl[ch4_fitting_wl_indices],
+                *popt,
+                epsilon=ch4_eps[ch4_fitting_wl_indices])
+
+        # estimated target/background radiance ratio, "normalized" by transmittance_model_polynomial:
+        normalized_target_background_radiance_ratio = \
+            target_background_radiance_ratio[ch4_fitting_wl_indices]/transmittance_model_polynomial
+
+        # modeled target/background radiance ratio, "normalized" by
+        # transmittance_model_polynomial (which, by definition, leaves just the 
+        # exponential portion of the fit):
+        normalized_modeled_target_background_radiance_ratio = transmittance_model_exponential
+
+        dist = np.mean(np.abs(
+            normalized_target_background_radiance_ratio -
+            normalized_modeled_target_background_radiance_ratio))
+
+        mag = np.mean(np.abs(
+            normalized_target_background_radiance_ratio -
+            np.mean(normalized_target_background_radiance_ratio)))
+
+        # Xiang, et al. eq. 11:
+        normalized_dist = dist/mag
+
+        log.debug('      D_norm: %f   model concentration length (*1e5): %f',
+            normalized_dist, popt[0]*1.e5)
+
 
     log.info("...completed %d shifted plume experiments (cfg['NUM_PLUME_VARIATIONS']).",
         cfg['NUM_PLUME_VARIATIONS'])

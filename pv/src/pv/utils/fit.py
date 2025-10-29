@@ -4,7 +4,7 @@ import numpy as np
 from scipy.optimize import curve_fit
 
 
-def transmittance_model( wavelengths, *args, **kwargs):
+def transmittance_model_components( wavelengths, *args, **kwargs):
     r"""Parameterized discrete plume transmittance model.
 
     Implements eq. 6 in Xiang, et al., "Identification of false methane plumes
@@ -27,7 +27,9 @@ def transmittance_model( wavelengths, *args, **kwargs):
 
     Returns:
         Discretized, approximate plume transmittance (double) evaluated at
-        wavelengths.
+        wavelengths. In order to support various plume metrics, model results
+        returned as tuple of (polynomial portion of model, exponential portion
+        of model).
 
     Notes:
         - The transmittance model implemented here assumes that the values
@@ -51,5 +53,19 @@ def transmittance_model( wavelengths, *args, **kwargs):
     except:
         raise RuntimeError('len(wavelengths) must equal len(epsilon)')
 
-    return np.polyval(theta,wavelengths) * np.exp(-epsilon*alpha)
+    return (
+        np.polyval(theta,wavelengths),
+        np.exp(-epsilon*alpha) )
+
+
+def transmittance_model( wavelengths, *args, **kwargs):
+    """For compatibility with scipy.optimize.curve_fit(), wrapper around
+    transmittance_model_components(). See that function's docstring for
+    description and conventions used.
+
+    """
+    (polynomial_expression, exponential_expression) = \
+        transmittance_model_components( wavelengths, *args, **kwargs)
+
+    return polynomial_expression * exponential_expression
 
