@@ -1,0 +1,13 @@
+
+# macOS folder attributes:
+.DS_Store
+
+# emacs temporary and autosave files:
+*~
+\#*#
+
+# jupyter notebook auto-generated checkpoints...:
+.ipynb_checkpoints
+
+# ...and unsaved notebooks:
+Untitled*.ipynb

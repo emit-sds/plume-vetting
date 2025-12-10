@@ -1,0 +1,21 @@
+[build-system]
+requires = ['setuptools']
+build-backend = 'setuptools.build_meta'
+
+[project]
+name = 'pv'
+version = '1.0'
+dependencies = [
+    'geojson',
+    'geopandas',
+    'matplotlib',
+    'numpy',
+    'pandas',
+    'pyyaml',
+    'scipy',
+    'shapely',
+    'spectral'
+]
+
+[project.scripts]
+pv = 'pv.pv:main'
