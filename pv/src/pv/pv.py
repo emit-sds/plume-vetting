@@ -12,6 +12,8 @@ from scipy.optimize import linear_sum_assignment
 from scipy.optimize import curve_fit
 from scipy.spatial.distance import cdist
 import yaml
+import matplotlib.pyplot as plt
+from matplotlib.patches import Polygon
 
 from .emit_file import EMITAcquisitionFile, EMITMatchedFilterFile
 from .emit_plume import EMITPlume
@@ -42,7 +44,9 @@ def create_parser():
     return parser
 
 
-def plume_vetting( plume_data=None, plume_id=None, cfg=None, log_level=None):
+def plume_vetting(plume_data=None, plume_id=None, cfg=None,
+                  out_inoutplume_file=None, out_spectralmatch_file=None,
+                  out_ch4target_basefile=None, log_level=None):
     """Refactored and updated methane plume vetting implementation, originally
     based on publication, "Identification of false methane plumes for orbital
     imaging spectrometers: A case study with EMIT" by Xiang, et al.
@@ -65,10 +69,10 @@ def plume_vetting( plume_data=None, plume_id=None, cfg=None, log_level=None):
         log.setLevel(log_level)
 
     # plume instance:
-    plume = EMITPlume( plume_id=plume_id, plume_data=plume_data, cfg=cfg)
+    plume = EMITPlume(plume_id=plume_id, plume_data=plume_data, cfg=cfg)
 
-    log.info("running plume vetting metrics on plume %s, fid %s...",
-        plume.plume_id, plume.fid)
+    log.info("running plume vetting metrics on plume %s, fids %s...",
+             plume.plume_id, plume.fids)
 
     #
     # quantities common to all experiments for this plume:
@@ -77,21 +81,40 @@ def plume_vetting( plume_data=None, plume_id=None, cfg=None, log_level=None):
     # radiance data:
     l1b_radiance = EMITAcquisitionFile(
         root=cfg['emit_acquisition_dataproducts_root'],
-        id=plume.fid, level='l1b',
+        ids=plume.fids, level='l1b',
         type=cfg['emit_l1b_radiance_type'],
         ext='hdr')
 
-    #dbg:
-    print(f'l1b_radiance.data.shape: {l1b_radiance.data.shape}')
+    # Obs data:
+    l1b_obs = EMITAcquisitionFile(
+        root=cfg['emit_acquisition_dataproducts_root'],
+        ids=plume.fids, level='l1b',
+        type=cfg['emit_l1b_obs_type'],
+        ext='hdr')
+
+    # Loc data:
+    l1b_loc = EMITAcquisitionFile(
+        root=cfg['emit_acquisition_dataproducts_root'],
+        ids=plume.fids, level='l1b',
+        type=cfg['emit_l1b_loc_type'],
+        ext='hdr')
+
+    # ATM data:
+    # l2a_atm = EMITAcquisitionFile(
+    #     root=cfg['emit_acquisition_dataproducts_root'],
+    #     ids=plume.fids, level='l2a',
+    #     type=cfg['emit_l2a_atm_type'],
+    #     ext='hdr')
 
     # "combined" mask (clouds + water + 'no ch4_mf data'),
     # 'True' for features that should be excluded:
     l2a_mask = EMITAcquisitionFile(
         root=cfg['emit_acquisition_dataproducts_root'],
-        id=plume.fid, level='l2a',
+        ids=plume.fids, level='l2a',
         type=cfg['emit_l2a_mask_type'], ext='hdr')
-    combined_mask = np.sum(l2a_mask.data[:,:,:3],axis=-1) > 0                   # clouds, surface water
-    combined_mask[np.squeeze(plume.ch4_mf.data)<=cfg['NO_DATA_VALUE']] = True   # plus missing ch4_mf data
+
+    combined_mask = np.sum(l2a_mask.data[:, :, :3], axis=-1) > 0                   # clouds, surface water
+    combined_mask[np.squeeze(plume.ch4_mf.data) <= cfg['NO_DATA_VALUE']] = True   # plus missing ch4_mf data
 
     #
     # original, and shifted plume experiments:
@@ -100,12 +123,13 @@ def plume_vetting( plume_data=None, plume_id=None, cfg=None, log_level=None):
     log.info("performing %d shifted plume experiments (cfg['NUM_PLUME_VARIATIONS'])...",
         cfg['NUM_PLUME_VARIATIONS'])
 
-    for plume_variation_i in range(cfg['NUM_PLUME_VARIATIONS']+1):
+    results_list = []
+    for plume_variation_i in range(cfg['NUM_PLUME_VARIATIONS'] + 1):
 
         # first plume experiment is with respect to original plume, while
         # subsequent experiments are with respect to randomly shifted plumes:
 
-        if plume_variation_i==0:
+        if plume_variation_i == 0:
             is_random_variation = False
         else:
             # generate new random (rotation+translation) variation:
@@ -143,12 +167,14 @@ def plume_vetting( plume_data=None, plume_id=None, cfg=None, log_level=None):
             np.squeeze(plume.ch4_mf.data)[plume_mask],
             cfg['CH4_MF_EXCLUDE_PERCENTILE'])
         target_pixel_mask = np.logical_and(
-            plume_mask, np.squeeze(plume.ch4_mf.data)<=nth_percentile)
+            plume_mask, np.squeeze(plume.ch4_mf.data) <= nth_percentile)
 
-        if log.getEffectiveLevel()==logging.DEBUG:
-            if plume_variation_i==0:
-                log.debug('plume %s high-level MF metrics: variation#/min/max/mean/nth-percentile:', plume.fid)
-            log.debug('%d / %f / %f / %f / %f', plume_variation_i, in_plume_mf_min, in_plume_mf_max, in_plume_mf_mean, nth_percentile)
+        if log.getEffectiveLevel() == logging.DEBUG:
+            if plume_variation_i == 0:
+                log.debug('plume %s high-level MF metrics: '
+                          'variation#/min/max/mean/nth-percentile:', plume.fid)
+            log.debug('%d / %f / %f / %f / %f', plume_variation_i,
+                      in_plume_mf_min, in_plume_mf_max, in_plume_mf_mean, nth_percentile)
 
         # reduce target_pixel_mask to NUM_SEED_PIXELS:
         tmp = np.squeeze(plume.ch4_mf.data)[target_pixel_mask]
@@ -156,13 +182,12 @@ def plume_vetting( plume_data=None, plume_id=None, cfg=None, log_level=None):
         seed_threshold = tmp[-cfg['NUM_SEED_PIXELS']]
         target_pixel_mask = np.logical_and(
             target_pixel_mask,
-            (np.squeeze(plume.ch4_mf.data)*target_pixel_mask)>=seed_threshold)
+            (np.squeeze(plume.ch4_mf.data)*target_pixel_mask) >= seed_threshold)
 
         # "blur" pixel mask to form "region" of target pixels:
         dilated_target_pixel_mask = gaussian_filter(
             target_pixel_mask.astype(float),
-            sigma=cfg['GAUSSIAN_FILTER_SIGMA']) > \
-                cfg['GAUSSIAN_FILTER_RESULTS_THRESHOLD']
+            sigma=cfg['GAUSSIAN_FILTER_SIGMA']) > cfg['GAUSSIAN_FILTER_RESULTS_THRESHOLD']
 
         # and reapply combined mask in case Gaussian filtering has reintroduced pixels
         # that should be excluded:
@@ -172,21 +197,21 @@ def plume_vetting( plume_data=None, plume_id=None, cfg=None, log_level=None):
         # matched filter values:
         if cfg['POSITIVE_TARGET_PIXELS_ONLY']:
             dilated_target_pixel_mask = np.logical_and(
-                dilated_target_pixel_mask, np.squeeze(plume.ch4_mf.data)>0.)
+                dilated_target_pixel_mask, np.squeeze(plume.ch4_mf.data) > 0.)
 
         # background pixels ('True' for candidate background pixels):
 
         bpe = cfg['BACKGROUND_PAIRING_EXTENTS_IN_PIXELS']       # notational
         mf_delta = cfg['BACKGROUND_PAIRING_CH4_MF_THRESHOLD']   # convenience
 
-        background_pixel_mask = np.zeros(plume_mask.shape,dtype=bool)
-        num_lines,num_samples = background_pixel_mask.shape
+        background_pixel_mask = np.zeros(plume_mask.shape, dtype=bool)
+        num_lines, num_samples = background_pixel_mask.shape
 
         # consider background region based on target pixel extents...:
-        line_indices,sample_indices = np.nonzero(dilated_target_pixel_mask)
+        line_indices, sample_indices = np.nonzero(dilated_target_pixel_mask)
         background_pixel_mask[
-            max(0,min(line_indices)-bpe) : min(num_lines,max(line_indices)+bpe),
-            max(0,min(sample_indices)-bpe) : min(num_samples,max(sample_indices)+bpe)] = True
+            max(0, min(line_indices)-bpe): min(num_lines, max(line_indices)+bpe),
+            max(0, min(sample_indices)-bpe): min(num_samples, max(sample_indices)+bpe)] = True
 
         # as is the case with target pixels, make sure water and missing features are excluded:
         background_pixel_mask = background_pixel_mask & ~combined_mask
@@ -200,26 +225,27 @@ def plume_vetting( plume_data=None, plume_id=None, cfg=None, log_level=None):
             background_pixel_mask,
             np.logical_and(
                 np.squeeze(plume.ch4_mf.data) > -mf_delta,
-                np.squeeze(plume.ch4_mf.data) <  mf_delta))
+                np.squeeze(plume.ch4_mf.data) < mf_delta))
 
         # "optimal" target and background pixel pairing based on non-ch4 wavelengths:
 
         dilated_target_pixel_mask_indices = np.where(dilated_target_pixel_mask)
         background_pixel_mask_indices = np.where(background_pixel_mask)
 
-        wl = np.array(l1b_radiance.hdr['wavelength'],dtype=float)
+        wl = np.array(l1b_radiance.hdr['wavelength'], dtype=float)
         ch4_rngs = np.array(cfg['ch4_absorption_ranges'])
         ch4_wl_indices = []
         # accommodate any number of ch4_rngs range pairs:
         for i in range(ch4_rngs.shape[0]):
-            ch4_wl_indices.extend(list(np.where((wl >= ch4_rngs[i,0]) & (wl <= ch4_rngs[i,1]))[0]))
+            ch4_wl_indices.extend(list(np.where((wl >= ch4_rngs[i, 0]) &
+                                                (wl <= ch4_rngs[i, 1]))[0]))
         # and, just to be sure, make sure none of the indices are repeated, and
         # sort for convenience:
         ch4_wl_indices = list(set(ch4_wl_indices))
         ch4_wl_indices.sort()
         non_ch4_wl_indices = list(set(range(len(wl))).difference(set(ch4_wl_indices)))
-        target_non_ch4_spectra = l1b_radiance.data[dilated_target_pixel_mask][:,non_ch4_wl_indices]
-        background_non_ch4_spectra = l1b_radiance.data[background_pixel_mask][:,non_ch4_wl_indices]
+        target_non_ch4_spectra = l1b_radiance.data[dilated_target_pixel_mask][:, non_ch4_wl_indices]
+        background_non_ch4_spectra = l1b_radiance.data[background_pixel_mask][:, non_ch4_wl_indices]
 
         # L1-normalized Euclidian distance spectral similarity matrix
         # (target pixel rows x background pixel columns):
@@ -243,27 +269,49 @@ def plume_vetting( plume_data=None, plume_id=None, cfg=None, log_level=None):
             'background_mf',
             'target_mean_radiance',
             'background_mean_radiance'])
-        for tgt_idx,bg_idx in zip(target_row_indices, background_column_indices):
+        for idx, (tgt_idx, bg_idx) in enumerate(zip(target_row_indices, background_column_indices)):
             similarity_results_df.loc[tgt_idx] = [
                 tgt_idx,
                 bg_idx,
                 similarity_matrix[tgt_idx,bg_idx],
                 (dilated_target_pixel_mask_indices[0][tgt_idx],dilated_target_pixel_mask_indices[1][tgt_idx]),
                 (background_pixel_mask_indices[0][bg_idx],background_pixel_mask_indices[1][bg_idx]),
-                plume.ch4_mf.data[(dilated_target_pixel_mask_indices[0][tgt_idx],dilated_target_pixel_mask_indices[1][tgt_idx])][0],
-                plume.ch4_mf.data[(background_pixel_mask_indices[0][tgt_idx],background_pixel_mask_indices[1][tgt_idx])][0],
-                np.mean(l1b_radiance.data[(dilated_target_pixel_mask_indices[0][tgt_idx],dilated_target_pixel_mask_indices[1][tgt_idx]),:]),
-                np.mean(l1b_radiance.data[(background_pixel_mask_indices[0][tgt_idx],background_pixel_mask_indices[1][tgt_idx]),:]),
+                plume.ch4_mf.data[(dilated_target_pixel_mask_indices[0][tgt_idx], dilated_target_pixel_mask_indices[1][tgt_idx])][0],
+                plume.ch4_mf.data[(background_pixel_mask_indices[0][tgt_idx], background_pixel_mask_indices[1][tgt_idx])][0],
+                np.mean(l1b_radiance.data[(dilated_target_pixel_mask_indices[0][tgt_idx], dilated_target_pixel_mask_indices[1][tgt_idx]),:]),
+                np.mean(l1b_radiance.data[(background_pixel_mask_indices[0][tgt_idx], background_pixel_mask_indices[1][tgt_idx]),:]),
             ]
 
-        # dbg:
-        #print(similarity_results_df)
-
-        # to account for scene inhomogeneity, consider only a defined percentage
+        # To account for scene inhomogeneity, consider only a defined percentage
         # of pairs having the lowest (i.e., "best") similarity scores:
         sorted_similarity_results_df = similarity_results_df.sort_values(by='similarity_matrix_coefficient')
         sorted_similarity_results_df = sorted_similarity_results_df[
             :int(len(sorted_similarity_results_df)*cfg['SPECTRAL_SIMILARITY_FRACTION_RETAINED'])]
+
+        # Generate plot for showing target and background pixel groups
+        if plume_variation_i == 0:
+            # Only generating plot for the original plume
+            cmf_no_data = float(plume.ch4_mf.hdr['data ignore value'])
+            cmf_mask = np.where(plume.ch4_mf.data == cmf_no_data, 1, 0)
+            cmf_data = plume.ch4_mf.data / 8000.
+            cmf_data = np.where(cmf_mask == 1, 0, cmf_data)
+            target_line_indices = [index[0] for index in sorted_similarity_results_df['target_pixel_indices']]
+            target_samp_indices = [index[1] for index in sorted_similarity_results_df['target_pixel_indices']]
+            background_line_indices = [index[0] for index in sorted_similarity_results_df['background_pixel_indices']]
+            background_samp_indices = [index[1] for index in sorted_similarity_results_df['background_pixel_indices']]
+
+            fig, ax = plt.subplots(figsize=(6, 6))
+            ax.imshow(cmf_data, vmin=0, vmax=0.3, cmap='inferno')
+
+            poly = Polygon(plume.boundary_pixels.geometry.get_coordinates(),
+                           closed=True, facecolor='none', edgecolor='red')
+            ax.add_patch(poly)
+            ax.scatter(target_samp_indices, target_line_indices, s=1, color='red',
+                       label='In-plume')
+            ax.scatter(background_samp_indices, background_line_indices, s=1,
+                       color='green', label='Out-plume')
+            plt.legend()
+            plt.savefig(out_inoutplume_file, dpi=300)
 
         # ref. ../../tests/demo_plume_pixel_pairing.ipynb for examples of
         # metrics that could be drawn directly from sorted_similarity_results_df
@@ -278,24 +326,18 @@ def plume_vetting( plume_data=None, plume_id=None, cfg=None, log_level=None):
             [index[1] for index in sorted_similarity_results_df['background_pixel_indices']],   # sample indices
             :]
 
-        target_background_radiance_ratio = \
-            np.mean(target_radiances,axis=0)/np.mean(background_radiances,axis=0)
+        target_background_radiance_ratio = np.mean(target_radiances, axis=0) / np.mean(background_radiances, axis=0)
 
-        #
-        # TODO 1/2: ghg_process.main call for ch4 absorptivities (ch4_eps)
-        #
-
-        #
-        # TODO 2/2: as a result of TODO 1/2, reach into ./data for some ch4
-        # absorptivity data, TOTAL KLUDGE; FOR TEST PURPOSES ONLY:
-        #
-
-        ch4_eps = pd.read_csv('./data/AV320241104t181131_target.csv',
-            sep='\\s+', names=['index','lambda','eps'], header=None)
+        utils.ghg_process_old.main([
+            l1b_radiance.filename, l1b_obs.filename, l1b_loc.filename,
+            out_ch4target_basefile
+        ])
+        ch4_eps = pd.read_csv(out_ch4target_basefile + '_ch4_target',
+                              sep='\\s+', names=['index', 'lambda', 'eps'], header=None)
         ch4_eps['eps'] *= -1.
         # since these values have been provided on a slightly different wavelength grid,
         # interpolate to EMIT spectra:
-        ch4_eps_interp = np.interp(wl,ch4_eps['lambda'],ch4_eps['eps'])
+        ch4_eps_interp = np.interp(wl, ch4_eps['lambda'], ch4_eps['eps'])
         # to match eventual dataflow, just overwrite dataframe with ch4
         # interpolated values:
         ch4_eps = ch4_eps_interp
@@ -322,7 +364,7 @@ def plume_vetting( plume_data=None, plume_id=None, cfg=None, log_level=None):
             target_background_radiance_ratio[ch4_fitting_wl_indices],
             p0 = [1.] + [0.]*(cfg['TRANSMITTANCE_MODEL_POLYNOMIAL_DEGREE']+1))
 
-        # "goodnes" of fit metrics:
+        # "Goodness" of fit metrics:
         # what follows is "as implemented" in the original plume vetting code, using the
         # options as described in Chuchu et al. Much could be done to improve the
         # approach, beginning with questioning its rationale.
@@ -353,13 +395,51 @@ def plume_vetting( plume_data=None, plume_id=None, cfg=None, log_level=None):
         # Xiang, et al. eq. 11:
         normalized_dist = dist/mag
 
+        # Store results
+        results_list.append([normalized_dist, popt[0] * 1.e5])
+
         log.debug('      D_norm: %f   model concentration length (*1e5): %f',
             normalized_dist, popt[0]*1.e5)
 
+        # Generate spectral match plot for plume vetting
+        if plume_variation_i == 0:
+            # Only generating for the original plume
+            fig, axes = plt.subplots(2, 1, constrained_layout=True, squeeze=False)
+            axes = axes.flatten()
+
+            wl = wl[ch4_fitting_wl_indices]
+            yy = np.polyval(popt[1:], wl)
+            y1 = target_background_radiance_ratio[ch4_fitting_wl_indices]
+            y2 = y1 * np.exp(popt[0] * ch4_eps[ch4_fitting_wl_indices])
+            ax_upper = axes[0]
+
+            ax_upper.plot(wl, yy, label='Continuum function', color='green',
+                          linestyle='--', alpha=0.5)
+            line1 = ax_upper.plot(wl, y1, label='Measurement')[0]
+            line2 = ax_upper.plot(wl, y2, label='Model')[0]
+            color1 = line1.get_color()
+            color2 = line2.get_color()
+
+            ax_lower = axes[1]
+            y1 = y1 / yy
+            y2 = y2 / yy
+            ax_lower.plot(wl, y1, label='Measurement / Continuum function',
+                          color=color1, linestyle='--')
+            ax_lower.plot(wl, y2, label='Model / Continuum function',
+                          color=color2, linestyle='--')
+            ax_lower.set_xlabel('Wavelength')
+
+            handles_upper, labels_upper = ax_upper.get_legend_handles_labels()
+            handles_lower, labels_lower = ax_lower.get_legend_handles_labels()
+            combined_handles = handles_upper + handles_lower
+            combined_labels = labels_upper + labels_lower
+            plt.legend(combined_handles, combined_labels, fontsize=8)
+            plt.savefig(out_spectralmatch_file, dpi=300)
 
     log.info("...completed %d shifted plume experiments (cfg['NUM_PLUME_VARIATIONS']).",
         cfg['NUM_PLUME_VARIATIONS'])
 
+    return results_list
 
 def main():
     """Command-line and Python script entry point.
@@ -377,7 +457,7 @@ def main():
     gpd_plume_data = gpd.GeoDataFrame.from_features(
         geojson.load(open(args.plume_data))['features'])
 
-    if (args.plume_ids):
+    if args.plume_ids:
         # specific user-selected plumes:
         plume_ids = args.plume_ids
     else:
@@ -386,9 +466,16 @@ def main():
 
     for plume_id in plume_ids:
         plume_vetting(
-            plume_data=gpd_plume_data, plume_id=plume_id, cfg=cfg, log_level=args.log_level)
+            plume_data=gpd_plume_data,
+            plume_id=plume_id,
+            cfg=cfg,
+            out_inoutplume_file=args.out_inoutplume_file,
+            out_spectralmatch_file=args.out_spectralmatch_file,
+            out_ch4target_basefile=args.out_ch4target_basefile,
+            log_level=args.log_level
+        )
 
 
-if __name__=='__main__':
+if __name__ == '__main__':
     main()
 

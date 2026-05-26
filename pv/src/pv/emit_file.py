@@ -6,13 +6,214 @@ EMIT acquisition and matched filter file string and data access classes.
 import glob
 import os
 import re
+import tempfile
+import numpy as np
+from osgeo import gdal
 from spectral.io import envi
 
-# TODO: possible EMITFile base class for shared data, methods across
-# EMITAcquisitionFile and EMITMatchedFilterFile classes
+
+def EMITAcquisitionFile(filestr=None, **kwargs):
+        fids = kwargs['ids']
+        if fids is None:
+            raise KeyError(f'ids must be provided')
+
+        if len(fids) == 1:
+            emit_file = EMITAcquisitionSingleFile(filestr, **kwargs)
+        else:
+            emit_file = EMITAcquisitionMultiFile(filestr, **kwargs)
+
+        return emit_file
 
 
-class EMITAcquisitionFile(object):
+class EMITAcquisitionMultiFile(object):
+    def __init__(self, filestr=None, **kwargs):
+        fids = kwargs['ids']
+        fids.sort()
+        self.file_list = []
+
+        for fid in fids:
+            emit_file = EMITAcquisitionSingleFile(
+                root=kwargs['root'],
+                id=fid,
+                level=kwargs['level'],
+                type=kwargs['type'],
+                ext=kwargs['ext']
+            )
+
+            self.file_list.append(emit_file)
+
+    @property
+    def data(self):
+        combined_data = []
+        for emit_file in self.file_list:
+            combined_data.append(emit_file.data)
+
+        combined_data = np.concatenate(combined_data, axis=0)
+
+        return combined_data
+
+    @property
+    def glt_data(self):
+        assert len(self.file_list) == 2
+
+        glt_1 = self.file_list[0].data
+        glt_2 = self.file_list[1].data
+        glt_2 = glt_2.copy()
+
+        # Update the second glt file 
+        mask = glt_2[..., 1] != 0
+        glt_2[mask, 1] += np.max(glt_1[..., 1])
+
+        # Save the updated glt file in a tmp directory
+        glt_2_filename = self.file_list[1].filename.replace('hdr', 'img')
+        glt_2_ds = gdal.Open(glt_2_filename)
+        glt_2_geotransform = glt_2_ds.GetGeoTransform()
+        glt_2_projection = glt_2_ds.GetProjection()
+        glt_2_metadata = glt_2_ds.GetMetadata()
+
+        driver = gdal.GetDriverByName('GTiff')
+        glt_2_tmp_file = os.path.join(tempfile.gettempdir(),
+                                      f'{os.path.basename(glt_2_filename).replace(".img", "_tmp.tif")}')
+        glt_2_tmp_ds = driver.Create(
+            glt_2_tmp_file,
+            glt_2.shape[1],
+            glt_2.shape[0],
+            2,
+            np.int32
+        )
+        glt_2_tmp_ds.SetGeoTransform(glt_2_geotransform)
+        glt_2_tmp_ds.SetProjection(glt_2_projection)
+        glt_2_tmp_ds.SetMetadata(glt_2_metadata)
+
+        glt_2_tmp_ds.GetRasterBand(1).WriteArray(glt_2[..., 0])
+        glt_2_tmp_ds.GetRasterBand(1).SetColorInterpretation(gdal.GCI_Undefined)
+        glt_2_tmp_ds.GetRasterBand(1).SetDescription(glt_2_ds.GetRasterBand(1).GetDescription())
+
+        glt_2_tmp_ds.GetRasterBand(2).WriteArray(glt_2[..., 1])
+        glt_2_tmp_ds.GetRasterBand(2).SetColorInterpretation(gdal.GCI_Undefined)
+        glt_2_tmp_ds.GetRasterBand(2).SetDescription(glt_2_ds.GetRasterBand(2).GetDescription())
+        glt_2_tmp_ds.FlushCache()
+        glt_2_tmp_ds = None
+
+        # It seems gdal has problems to set both bands' color interpretation to
+        # undefined, so the glt2 tmp file can't be merged with the original glt1
+        # file. As a workaround, we also generate a tmp glt1 file that has the
+        # same color interpretation setting with the glt2 tmp file so that they
+        # can be merged using gdalbuildvrt command.
+        glt_1_filename = self.file_list[0].filename.replace('hdr', 'img')
+        glt_1_tmp_file = os.path.join(tempfile.gettempdir(),
+                                      f'{os.path.basename(glt_1_filename).replace(".img", "_tmp.tif")}')
+        gdal.Translate(
+            glt_1_tmp_file,
+            glt_1_filename
+        )
+        glt_1_tmp_ds = gdal.Open(glt_1_tmp_file, gdal.GA_Update)
+        glt_1_tmp_ds.GetRasterBand(1).SetColorInterpretation(gdal.GCI_Undefined)
+        glt_1_tmp_ds.GetRasterBand(2).SetColorInterpretation(gdal.GCI_Undefined)
+        glt_1_tmp_ds.FlushCache()
+        glt_1_tmp_ds = None
+
+        glt_vrt_ds = gdal.BuildVRT(
+            '',
+            [glt_1_tmp_file, glt_2_tmp_file],
+            options=gdal.BuildVRTOptions(
+                srcNodata=0,
+                VRTNodata=0
+            )
+        )
+        sample_data = glt_vrt_ds.GetRasterBand(1).ReadAsArray()
+        line_data = glt_vrt_ds.GetRasterBand(2).ReadAsArray()
+
+        combined_glt = np.stack([sample_data, line_data], axis=2)
+
+        # Clean up the glt tmp files
+        if os.path.exists(glt_1_tmp_file):
+            os.remove(glt_1_tmp_file)
+        if os.path.exists(glt_2_tmp_file):
+            os.remove(glt_2_tmp_file)
+
+        return combined_glt
+
+    @property
+    def date(self):
+        return self.file_list[0].date
+
+    @property
+    def filename(self):
+        return self.file_list[0].filename
+
+    @property
+    def filestr(self):
+        return self.file_list[0].filestr
+
+    @property
+    def hdr(self):
+        return self.file_list[0].hdr
+
+    @property
+    def map_info(self):
+        combined_map_info = self.file_list[0].hdr['map info']
+        for emit_file in self.file_list[1:]:
+            individual_map_info = emit_file.hdr['map info']
+
+            if float(individual_map_info[3]) < float(combined_map_info[3]):
+                combined_map_info[3] = individual_map_info[3]
+
+            if float(individual_map_info[4]) > float(combined_map_info[4]):
+                combined_map_info[4] = individual_map_info[4]
+
+            assert len(combined_map_info) == len(individual_map_info)
+            assert combined_map_info[0] == individual_map_info[0]
+            assert combined_map_info[1] == individual_map_info[1]
+            assert combined_map_info[2] == individual_map_info[2]
+            assert combined_map_info[5] == individual_map_info[5]
+            assert combined_map_info[6] == individual_map_info[6]
+            assert combined_map_info[7] == individual_map_info[7]
+
+        return combined_map_info
+
+    @property
+    def id(self):
+        return self.file_list[0].id
+
+    @property
+    def level(self):
+        return self.file_list[0].level
+
+    @property
+    def orbit(self):
+        return self.file_list[0].level
+
+    @property
+    def path(self):
+        return self.file_list[0].path
+
+    @property
+    def path_and_filestr(self):
+        return self.file_list[0].path_and_filestr
+
+    @property
+    def root(self):
+        return self.file_list[0].root
+
+    @property
+    def scene(self):
+        return self.file_list[0].scene
+
+    @property
+    def time(self):
+        return self.file_list[0].time
+
+    @property
+    def type(self):
+        return self.file_list[0].type
+
+    @property
+    def ver(self):
+        return self.file_list[0].ver
+
+
+class EMITAcquisitionSingleFile(object):
     """Gathers EMIT acquisition file, path, and high-level data access
     operations, where (path and) file name is assumed to be of the form
     <path>/emit<date>t<time>_<orbit>_<scene>_<level>_<type>_<ver>.<ext>.
@@ -176,7 +377,6 @@ class EMITAcquisitionFile(object):
             if self.ext and not re.match('.',self.ext):
                     self.ext = '.' + self.ext
 
-
     @property
     def data(self):
         """Return a numpy.memmap view of the file's data.
@@ -191,6 +391,9 @@ class EMITAcquisitionFile(object):
         self.ext = ext_sav
         return np_memmap_array
 
+    @property
+    def glt_data(self):
+        return self.data
 
     @property
     def date(self):
@@ -203,7 +406,6 @@ class EMITAcquisitionFile(object):
             return re.search('\\d{8}',self._id).group()
         else:
             return None
-
 
     @property
     def filename(self):
@@ -220,7 +422,6 @@ class EMITAcquisitionFile(object):
             e1 = f"search for file matching {self.path_and_filestr} returned non-unique result ({len(filestr_glob_results)} file(s) found)."
             e2 = f" Set 'ext' to obtain unique match."
             raise RuntimeError(e1+e2)
-
 
     @property
     def filestr(self):
@@ -240,7 +441,6 @@ class EMITAcquisitionFile(object):
                 'v' + (self.ver if self.ver else '*')           + \
                 (self.ext if self.ext else '')
 
-
     @property
     def hdr(self):
         """Return dict view of .hdr file.
@@ -255,6 +455,9 @@ class EMITAcquisitionFile(object):
         self.ext = ext_sav
         return hdr
 
+    @property
+    def map_info(self):
+        return self.hdr['map info']
 
     @property
     def id(self):
@@ -267,16 +470,13 @@ class EMITAcquisitionFile(object):
                 't' + \
                 (self.time if self.time else '*')
 
-
     @property
     def level(self):
         return self._level
 
-
     @property
     def orbit(self):
         return self._orbit
-
 
     @property
     def path(self):
@@ -294,7 +494,6 @@ class EMITAcquisitionFile(object):
                 self.id                           + '/' + \
                 (self.level if self.level else '*')
 
-
     @property
     def path_and_filestr(self):
         """Return '<path>/emit<date>t<time>_<orbit>_<scene>_<level>_<type>_<ver>.<ext>'
@@ -307,16 +506,13 @@ class EMITAcquisitionFile(object):
         else:
             return ((self.path + '/') if self.path else '') + self.filestr
 
-
     @property
     def root(self):
         return self._root
 
-
     @property
     def scene(self):
         return self._scene
-
 
     @property
     def time(self):
@@ -330,18 +526,95 @@ class EMITAcquisitionFile(object):
         else:
             return None
 
-
     @property
     def type(self):
         return self._type
-
 
     @property
     def ver(self):
         return self._ver
 
 
-class EMITMatchedFilterFile(object):
+def EMITMatchedFilterFile(filestr=None, **kwargs):
+    fids = kwargs['ids']
+    if fids is None:
+        raise KeyError(f'ids must be provided')
+
+    if len(fids) == 1:
+        mf_file = EMITMatchedFilterSingleFile(filestr, **kwargs)
+    else:
+        mf_file = EMITMatchedFilterMultiFile(filestr, **kwargs)
+
+    return mf_file
+
+
+class EMITMatchedFilterMultiFile(object):
+    def __init__(self, filestr=None, **kwargs):
+        fids = kwargs['ids']
+        self.file_list = []
+
+        for fid in fids:
+            mf_file = EMITMatchedFilterSingleFile(
+                root=kwargs['root'],
+                id=fid,
+                type=kwargs['type'],
+                ext=kwargs['ext']
+            )
+
+            self.file_list.append(mf_file)
+
+    @property
+    def data(self):
+        combined_data = []
+        for mf_file in self.file_list:
+            combined_data.append(mf_file.data)
+
+        combined_data = np.concatenate(combined_data, axis=0)
+
+        return combined_data
+
+    @property
+    def date(self):
+        return self.file_list[0].date
+
+    @property
+    def filename(self):
+        return self.file_list[0].filename
+
+    @property
+    def filestr(self):
+        return self.file_list[0].filestr
+
+    @property
+    def hdr(self):
+        return self.file_list[0].hdr
+
+    @property
+    def id(self):
+        return self.file_list[0].id
+
+    @property
+    def path(self):
+        return self.file_list[0].path
+
+    @property
+    def path_and_filestr(self):
+        return self.file_list[0].path_and_filestr
+
+    @property
+    def root(self):
+        return self.file_list[0].root
+
+    @property
+    def time(self):
+        return self.file_list[0].time
+
+    @property
+    def type(self):
+        return self.file_list[0].type
+
+
+class EMITMatchedFilterSingleFile(object):
     """Gathers path, file, and high-level data access operations for EMIT
     matched filter, and associated matched filter, files, where (path and) file
     name is assumed to be of the form <path>/emit<date>t<time>_<type>.<ext>.
@@ -402,7 +675,7 @@ class EMITMatchedFilterFile(object):
     file_fmt = '<path>/emit<date>t<time>_<type>.<ext>'
     path_fmt = '<root>/<date>'
 
-    def __init__( self, filestr=None, **kwargs):
+    def __init__(self, filestr=None, **kwargs):
 
         # directly-defined attributes:
         self.ext = None
@@ -601,4 +874,3 @@ class EMITMatchedFilterFile(object):
     @property
     def type(self):
         return self._type
-

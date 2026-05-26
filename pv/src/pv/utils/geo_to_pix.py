@@ -80,22 +80,21 @@ def geo_to_pix( xy_geo, l1b_glt):
     #                ---> +sample, +x
     #
 
-    _xy_geo = np.array(xy_geo).reshape(-1,2)
-    _xy_pix = np.zeros(_xy_geo.shape,dtype=int)
+    _xy_geo = np.array(xy_geo).reshape(-1, 2)
+    _xy_pix = np.zeros(_xy_geo.shape, dtype=int)
 
-    map_info = l1b_glt.hdr['map info']
+    map_info = l1b_glt.map_info
 
-    _xy_pix[:,0] =  ((_xy_geo[:,0]-float(map_info[3]))/float(map_info[5])).round().astype(int)
-    _xy_pix[:,1] = -((_xy_geo[:,1]-float(map_info[4]))/float(map_info[6])).round().astype(int)
+    _xy_pix[:, 0] =  ((_xy_geo[:, 0]-float(map_info[3]))/float(map_info[5])).round().astype(int)
+    _xy_pix[:, 1] = -((_xy_geo[:, 1]-float(map_info[4]))/float(map_info[6])).round().astype(int)
 
     # _xy_pix correspond to lon,lat. since lon indexes on columns and lat
     # indexes on rows, note the index interchange when addressing l1b glt matrix
     # terms:
 
-    glt_sample_lookup   = l1b_glt.data[_xy_pix[:,1],_xy_pix[:,0],0] -1 
-    glt_line_lookup     = l1b_glt.data[_xy_pix[:,1],_xy_pix[:,0],1] -1 
-
-    #print(np.column_stack((glt_line_lookup,glt_sample_lookup)))
+    glt_data = l1b_glt.glt_data
+    glt_sample_lookup = glt_data[_xy_pix[:, 1], _xy_pix[:, 0], 0] - 1
+    glt_line_lookup   = glt_data[_xy_pix[:, 1], _xy_pix[:, 0], 1] - 1
 
     return \
         _xy_pix, \
