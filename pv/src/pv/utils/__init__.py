@@ -2,3 +2,8 @@ from .geo_to_pix import geo_to_pix
 from .other_plumes_in_scene import other_plumes_in_scene
 from .fit import transmittance_model
 from .fit import transmittance_model_components
+from . import ghg_process_new
+from . import ghg_process_old
+from . import target_generation_new
+from . import target_generation_old
+from . import utils

@@ -11,7 +11,7 @@ from shapely import Point, Polygon
 import yaml
 
 from . import emit_file
-from .utils import geo_to_pix
+from . utils import geo_to_pix
 
 
 class EMITPlume(object):
@@ -58,7 +58,7 @@ class EMITPlume(object):
             GeoPandas methods.
 
     """
-    def __init__( self, plume_id=None, plume_data=None, cfg=None):
+    def __init__(self, plume_id=None, plume_data=None, cfg=None):
         """EMITPlume constructor using one of several approaches.
 
         """
@@ -81,7 +81,7 @@ class EMITPlume(object):
 
         gpd_plume_data_to_search = []
         
-        if isinstance(plume_data,gpd.geodataframe.GeoDataFrame):
+        if isinstance(plume_data, gpd.geodataframe.GeoDataFrame):
 
             if len(plume_data) == 1:
                 # simplest case:
@@ -89,9 +89,9 @@ class EMITPlume(object):
             else:
                 gpd_plume_data_to_search = plume_data
 
-        elif isinstance(plume_data,str) or isinstance(plume_data,geojson.feature.FeatureCollection):
+        elif isinstance(plume_data, str) or isinstance(plume_data, geojson.feature.FeatureCollection):
 
-            if isinstance(plume_data,str):
+            if isinstance(plume_data, str):
                 pf = open(plume_data)
                 plume_data_geojson = geojson.load(pf)
                 pf.close()
@@ -111,10 +111,10 @@ class EMITPlume(object):
 
             # file id key:
             re_search_bool = [
-                True if re.search('fids',key,re.IGNORECASE) else False
+                True if re.search('fids', key, re.IGNORECASE) else False
                 for key in gpd_plume_data_to_search.keys()]
-            _fid_key = [key for key,re_srch_bool in zip(gpd_plume_data_to_search.keys(),re_search_bool) if re_srch_bool]
-            if len(_fid_key)==1:
+            _fid_key = [key for key, re_srch_bool in zip(gpd_plume_data_to_search.keys(), re_search_bool) if re_srch_bool]
+            if len(_fid_key) == 1:
                 self._fid_key = _fid_key[0]
             else:
                 raise RuntimeError("Could not find a plume data collection key containing the string 'fids'")
@@ -122,13 +122,11 @@ class EMITPlume(object):
             # other possible key searches here...
 
             gpd_plume_data = gpd_plume_data_to_search[
-                [pid==plume_id for pid in gpd_plume_data_to_search['Plume ID']]]
+                [pid == plume_id for pid in gpd_plume_data_to_search['Plume ID']]]
             if len(gpd_plume_data) == 1:
                 self.plume = gpd_plume_data
             else:
                 raise RuntimeError(f"Could not find instance of '{plume_id}' in '{plume_data}'")
-
-
 
     @property
     def boundary_pixels(self):
@@ -146,7 +144,7 @@ class EMITPlume(object):
                 # get the referenced glt for the scene:
                 self._l1b_glt = emit_file.EMITAcquisitionFile(
                     root=self.cfg['emit_acquisition_dataproducts_root'],
-                    id=self.fid,
+                    ids=self.fids, ext='hdr',
                     level='l1b', type=self.cfg['emit_l1b_glt_type'])
 
             # plume boundary, in acquisition pixel space (line/sample):
@@ -155,10 +153,9 @@ class EMITPlume(object):
                 self._l1b_glt)
 
             self._boundary_xy_pixels = gpd.GeoSeries(
-                Polygon(line_sample_pix[:,[1,0]]))  # note line/sample -> sample/line
+                Polygon(line_sample_pix[:, [1, 0]]))  # note line/sample -> sample/line
 
         return self._boundary_xy_pixels
-
 
     @property
     def ch4_mf(self):
@@ -167,20 +164,22 @@ class EMITPlume(object):
         Returns:
             EMITMatchedFilterFile object corresponding to the plume's methane
             matched filter results.
-
         """
         if not self._ch4_mf:
             self._ch4_mf = emit_file.EMITMatchedFilterFile(
                 root=self.cfg['emit_matched_filter_dataproducts_root'],
-                id=self.plume[self._fid_key].iloc[0][0],
-                type='ch4_mf',ext='hdr')
-        return self._ch4_mf
+                ids=self.fids,
+                type='ch4_mf', ext='hdr')
 
+        return self._ch4_mf
 
     @property
     def fid(self):
         return self.plume[self._fid_key].iloc[0][0]
 
+    @property
+    def fids(self):
+        return self.plume[self._fid_key].iloc[0]
 
     def mask(self,random_variation=False):
         """Return a boolean mask in, and size of, acquisition xy space
@@ -198,24 +197,23 @@ class EMITPlume(object):
             # compute original plume mask:
             mask = np.zeros(self.ch4_mf.data.shape,dtype=bool)
             (min_x, min_y, max_x, max_y) = tuple(round(self.boundary_pixels.bounds).astype(int).iloc[0])
-            for x in range(min_x,max_x+1):
-                for y in range(min_y,max_y+1):
+            for x in range(min_x, max_x + 1):
+                for y in range(min_y, max_y + 1):
                     if self.boundary_pixels.iloc[0].contains(Point(x,y)):
-                        mask[y,x]=True  # note ch4_mf.data are line(y)/sample(x)
+                        mask[y, x] = True  # note ch4_mf.data are line(y)/sample(x)
         elif random_variation and self._random_variation is not None:
             # compute mask for current random plume variation:
-            mask = np.zeros(self.ch4_mf.data.shape,dtype=bool)
+            mask = np.zeros(self.ch4_mf.data.shape, dtype=bool)
             (min_x, min_y, max_x, max_y) = tuple(round(self._random_variation.bounds).astype(int).iloc[0])
-            for x in range(min_x,max_x+1):
-                for y in range(min_y,max_y+1):
-                    if self._random_variation.iloc[0].contains(Point(x,y)):
-                        mask[y,x]=True  # note ch4_mf.data are line(y)/sample(x)
+            for x in range(min_x, max_x+1):
+                for y in range(min_y, max_y+1):
+                    if self._random_variation.iloc[0].contains(Point(x, y)):
+                        mask[y, x] = True  # note ch4_mf.data are line(y)/sample(x)
         else:
-            raise RuntimeError(
-                "A random variation is not available or has not been generated; cannot compute corresponding mask")
+            raise RuntimeError("A random variation is not available or has not "
+                               "been generated; cannot compute corresponding mask")
 
         return mask
-
 
     def new_random_variation(self):
         """Generate a rotation+translation random plume variation in acquisition
@@ -260,8 +258,6 @@ class EMITPlume(object):
                 new_random_variation = translated_rotated_plume
 
         self._random_variation = new_random_variation
-        #self._random_variation = new_random_variation.iloc[0]
-
 
     @property
     def plume_id(self):
@@ -274,4 +270,3 @@ class EMITPlume(object):
 
         """
         return self._random_variation
-
