@@ -18,6 +18,7 @@ def EMITAcquisitionFile(filestr=None, **kwargs):
             raise KeyError(f'ids must be provided')
 
         if len(fids) == 1:
+            kwargs['id'] = fids[0]
             emit_file = EMITAcquisitionSingleFile(filestr, **kwargs)
         else:
             emit_file = EMITAcquisitionMultiFile(filestr, **kwargs)
