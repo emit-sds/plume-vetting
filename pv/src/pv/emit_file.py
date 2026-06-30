@@ -542,6 +542,7 @@ def EMITMatchedFilterFile(filestr=None, **kwargs):
         raise KeyError(f'ids must be provided')
 
     if len(fids) == 1:
+        kwargs['id'] = fids[0]
         mf_file = EMITMatchedFilterSingleFile(filestr, **kwargs)
     else:
         mf_file = EMITMatchedFilterMultiFile(filestr, **kwargs)
